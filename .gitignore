@@ -54,3 +54,12 @@ compile_commands.json
 *creator.user*
 
 *_qmlcache.qrc
+
+# Local CMake presets (machine-specific toolchain paths)
+CMakeUserPresets.json
+
+# Qt Creator per-user project settings
+.qtcreator/
+
+# Personal Claude Code notes
+CLAUDE.local.md

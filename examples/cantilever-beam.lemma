@@ -1,0 +1,102 @@
+{
+    "format": "lemma-worksheet",
+    "version": 1,
+    "regions": [
+        {
+            "type": "math",
+            "x": 72,
+            "y": 96,
+            "source": "L := 2.5 m"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 96,
+            "source": "P := 4 kN"
+        },
+        {
+            "type": "math",
+            "x": 480,
+            "y": 96,
+            "source": "E := 200 GPa"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 144,
+            "source": "b := 50 mm"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 144,
+            "source": "h := 100 mm"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 192,
+            "source": "I := b h^3 / 12"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 192,
+            "source": "I = mm^4"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 240,
+            "source": "M := P L"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 240,
+            "source": "M = kN m"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 288,
+            "source": "σ := M (h/2) / I"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 288,
+            "source": "σ = MPa"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 336,
+            "source": "δ := P L^3 / (3 E I)"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 336,
+            "source": "δ = mm"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 384,
+            "source": "δ_allow := L / 240"
+        },
+        {
+            "type": "math",
+            "x": 288,
+            "y": 384,
+            "source": "δ_allow = mm"
+        },
+        {
+            "type": "math",
+            "x": 72,
+            "y": 432,
+            "source": "δ / δ_allow ="
+        }
+    ]
+}
