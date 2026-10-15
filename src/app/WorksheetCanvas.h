@@ -5,12 +5,14 @@
 #include <QAbstractScrollArea>
 #include <QFont>
 #include <QPointF>
+#include <QSet>
 #include <QTimer>
 
 class QPainter;
 
 // The page view: math regions placed freely on US Letter pages, Mathcad style.
 // Click anywhere to move the red crosshair, then type to start a region there.
+// Drag on empty space or Shift+click to select regions, then drag, nudge or delete them.
 //
 // Document coordinates are in 1/96 inch, with (0, 0) at the top-left of the first page.
 class WorksheetCanvas : public QAbstractScrollArea {
@@ -34,6 +36,10 @@ public:
 
     // The point on a region's baseline just before character `index` (UTF-16) of its source.
     QPointF sourcePosition(const lemma::Region& r, int index) const;
+
+    // Regions picked by rubber band, Shift+click or Ctrl+A. Never includes the one being edited.
+    const QSet<int>& selection() const { return selection_; }
+    void selectAll();
 
     // Pages that have content, for printing.
     int pageCount() const;
@@ -66,6 +72,12 @@ private:
 
     void paintRegions(QPainter& painter, bool onScreen) const;
 
+    void setSelection(const QSet<int>& ids);
+    void deleteSelection();
+    // Moves the selected regions together. The group stops as a whole at the page's
+    // top and left edges, so its layout is kept.
+    void moveSelection(QPointF delta);
+
     void beginEditing(int id, int caret);
     void endEditing();
     void insertText(const QString& text);
@@ -85,8 +97,16 @@ private:
     bool caretVisible_ = true;
     QTimer caretBlink_;
 
+    QSet<int> selection_;
+
     int pressedId_ = 0;
     QPointF pressPos_;
     QPointF pressRegionPos_;
     bool dragging_ = false;
+
+    // Rubber-band selection, from a press on empty page space.
+    bool bandPressed_ = false;
+    bool banding_ = false;
+    QRectF band_;
+    QSet<int> bandBase_; // selection kept under the band (Shift held)
 };
