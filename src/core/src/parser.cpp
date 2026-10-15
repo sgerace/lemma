@@ -2,10 +2,12 @@
 
 #include "lemma/error.h"
 
+#include <fast_float/fast_float.h>
+
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace lemma {
@@ -91,7 +93,10 @@ std::vector<Token> tokenize(std::string_view src)
                 }
             }
             Token t{Token::Kind::Number, start, i};
-            std::from_chars(src.data() + start, src.data() + i, t.number);
+            const auto result = fast_float::from_chars(src.data() + start, src.data() + i, t.number);
+            if (result.ec == std::errc::result_out_of_range) {
+                throw Error("Number is out of range", start, i);
+            }
             tokens.push_back(std::move(t));
             continue;
         }

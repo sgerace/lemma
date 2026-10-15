@@ -101,6 +101,7 @@ TEST_CASE("Malformed input reports where the problem is")
     CHECK_THROWS_AS(parseStatement("(1 + 2"), Error);
     CHECK_THROWS_AS(parseStatement("2 := 3"), Error);
     CHECK_THROWS_AS(parseStatement("1 $ 2"), Error);
+    CHECK_THROWS_AS(parseStatement("1e999"), Error);
 
     try {
         parseStatement("x := 1 $ 2");
@@ -108,5 +109,13 @@ TEST_CASE("Malformed input reports where the problem is")
     } catch (const Error& e) {
         CHECK(e.begin() == 7);
         CHECK(e.end() == 8);
+    }
+
+    try {
+        parseStatement("x := 2 * 1e999 m");
+        FAIL("expected an error");
+    } catch (const Error& e) {
+        CHECK(e.begin() == 9);
+        CHECK(e.end() == 14);
     }
 }
