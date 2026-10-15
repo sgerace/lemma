@@ -16,4 +16,8 @@ std::string formatNumber(double value, const FormatOptions& options = {});
 // Formats a result in its default display unit, e.g. "20 J" or "9.807 m/s²".
 std::string formatQuantity(const Quantity& q, const FormatOptions& options = {});
 
+// Names a dimension for messages: a named unit when one fits ("N"), otherwise SI base
+// units ("m/s²"), or "unitless".
+std::string describeDimension(const Dimension& dim);
+
 } // namespace lemma

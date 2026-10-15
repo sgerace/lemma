@@ -1,6 +1,7 @@
 #include "lemma/evaluator.h"
 
 #include "lemma/error.h"
+#include "lemma/format.h"
 #include "lemma/units.h"
 
 #include <cmath>
@@ -48,11 +49,6 @@ const Function* Environment::function(std::string_view name) const
 
 namespace {
 
-std::string describe(const Dimension& dim)
-{
-    return dim.isDimensionless() ? "unitless" : dim.toString();
-}
-
 std::optional<Quantity> constant(std::string_view name)
 {
     if (name == "π" || name == "pi") return Quantity::scalar(std::numbers::pi);
@@ -72,7 +68,8 @@ Quantity checked(Quantity q, const Node& node)
 Quantity power(const Quantity& base, const Quantity& exponent, const Node& node)
 {
     if (!exponent.dim.isDimensionless()) {
-        throw Error("An exponent can't have units (it has " + describe(exponent.dim) + ")", node.begin, node.end);
+        throw Error("An exponent can't have units (it has " + describeDimension(exponent.dim) + ")", node.begin,
+                    node.end);
     }
     if (base.dim.isDimensionless()) {
         return checked({std::pow(base.value, exponent.value), {}}, node);
@@ -87,7 +84,8 @@ Quantity power(const Quantity& base, const Quantity& exponent, const Node& node)
 Quantity requireUnitless(const Quantity& q, const std::string& function, const Node& node)
 {
     if (!q.dim.isDimensionless()) {
-        throw Error(function + " needs a unitless argument (it has " + describe(q.dim) + ")", node.begin, node.end);
+        throw Error(function + " needs a unitless argument (it has " + describeDimension(q.dim) + ")", node.begin,
+                    node.end);
     }
     return q;
 }
@@ -106,7 +104,7 @@ Quantity extremum(const std::vector<Quantity>& args, const Node& node, bool want
     Quantity best = args[0];
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (!(args[i].dim == best.dim)) {
-            throw Error("Units don't match: " + describe(best.dim) + " and " + describe(args[i].dim),
+            throw Error("Units don't match: " + describeDimension(best.dim) + " and " + describeDimension(args[i].dim),
                         node.args[i]->begin, node.args[i]->end);
         }
         if (wantMax ? args[i].value > best.value : args[i].value < best.value) {
@@ -196,7 +194,8 @@ private:
         case '+':
         case '-':
             if (!(a.dim == b.dim)) {
-                throw Error("Units don't match: " + describe(a.dim) + " and " + describe(b.dim), node.begin, node.end);
+                throw Error("Units don't match: " + describeDimension(a.dim) + " and " + describeDimension(b.dim),
+                            node.begin, node.end);
             }
             return {node.op == '+' ? a.value + b.value : a.value - b.value, a.dim};
         case '*':

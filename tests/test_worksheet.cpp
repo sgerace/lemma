@@ -88,6 +88,16 @@ TEST_CASE("Mismatched units are errors")
     CHECK(lastError({"sin(1 m) ="}) == "sin needs a unitless argument (it has m)");
 }
 
+TEST_CASE("Unit-mismatch errors name dimensions with named units when one fits")
+{
+    CHECK(lastError({"1 N + 1 kg ="}) == "Units don't match: N and kg");
+    CHECK(lastError({"1 J = W"}) == "Units don't match: the result is J, but W is W");
+    CHECK(lastError({"1 Pa + 1 m/s^2 ="}) == "Units don't match: Pa and m/s²");
+    CHECK(lastError({"1 m/s^2 = N"}) == "Units don't match: the result is m/s², but N is N");
+    CHECK(lastError({"2^(1 N) ="}) == "An exponent can't have units (it has N)");
+    CHECK(lastError({"1 + 1 m ="}) == "Units don't match: unitless and m");
+}
+
 TEST_CASE("Angles and constants")
 {
     CHECK(lastValue({"sin(30 deg) ="}) == "0.5");
