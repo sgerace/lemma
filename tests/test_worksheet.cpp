@@ -136,6 +136,26 @@ TEST_CASE("Evaluation order is top to bottom, then left to right")
     CHECK(sideBySide.region(right)->result.value == "4");
 }
 
+TEST_CASE("A restored region keeps its id and its place in the order")
+{
+    Worksheet ws;
+    const int a = ws.addRegion(0, 0, "x := 1");
+    const int b = ws.addRegion(0, 0, "x := 2"); // same spot: the later one wins ties
+    ws.addRegion(0, 40, "x =");
+    const Region removed = *ws.region(a);
+    ws.removeRegion(a);
+    ws.restoreRegion(removed);
+
+    REQUIRE(ws.regions().size() == 3);
+    CHECK(ws.regions()[0].id == a);
+    CHECK(ws.regions()[1].id == b);
+    ws.evaluate();
+    CHECK(ws.regions()[2].result.value == "2");
+
+    // New regions never reuse a restored id.
+    CHECK(ws.addRegion(0, 80) > ws.regions()[2].id);
+}
+
 TEST_CASE("Errors stop a definition, so later uses report it as undefined")
 {
     const Worksheet ws = sheet({"a := 1 m + 1 s", "a ="});

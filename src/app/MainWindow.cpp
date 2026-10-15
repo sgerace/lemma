@@ -4,6 +4,7 @@
 #include "PdfExport.h"
 #include "WorksheetCanvas.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QFileDialog>
@@ -22,7 +23,8 @@ MainWindow::MainWindow(QWidget* parent)
     , canvas_(new WorksheetCanvas(this))
 {
     setCentralWidget(canvas_);
-    connect(canvas_, &WorksheetCanvas::modified, this, [this] { setWindowModified(true); });
+    // Undoing back to the saved state clears the modified marker.
+    connect(canvas_->undoStack(), &QUndoStack::cleanChanged, this, [this](bool clean) { setWindowModified(!clean); });
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("&New"), QKeySequence::New, this, &MainWindow::newFile);
@@ -33,6 +35,20 @@ MainWindow::MainWindow(QWidget* parent)
     file->addAction(tr("&Export PDF..."), QKeySequence(tr("Ctrl+E")), this, &MainWindow::exportPdf);
     file->addSeparator();
     file->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+
+    QMenu* edit = menuBar()->addMenu(tr("&Edit"));
+    QAction* undo = canvas_->undoStack()->createUndoAction(this, tr("&Undo"));
+    undo->setShortcuts(QKeySequence::Undo);
+    edit->addAction(undo);
+    QAction* redo = canvas_->undoStack()->createRedoAction(this, tr("&Redo"));
+    // Ctrl+Y (Cmd+Y on macOS) everywhere, as on Windows, plus the platform's redo keys.
+    // It goes first because menus show only the first shortcut.
+    const QKeySequence ctrlY(Qt::CTRL | Qt::Key_Y);
+    QList<QKeySequence> redoKeys = QKeySequence::keyBindings(QKeySequence::Redo);
+    redoKeys.removeAll(ctrlY);
+    redoKeys.prepend(ctrlY);
+    redo->setShortcuts(redoKeys);
+    edit->addAction(redo);
 
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("&Quick Reference"), QKeySequence::HelpContents, this, &MainWindow::showQuickReference);
@@ -158,6 +174,7 @@ bool MainWindow::maybeSave()
 void MainWindow::setCurrentPath(const QString& path)
 {
     currentPath_ = path;
+    canvas_->undoStack()->setClean();
     setWindowModified(false);
     const QString name = path.isEmpty() ? tr("Untitled") : QFileInfo(path).fileName();
     setWindowTitle(tr("%1[*] - Lemma").arg(name));

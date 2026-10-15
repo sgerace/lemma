@@ -1,6 +1,7 @@
 #include "WorksheetCanvas.h"
 
 #include <QApplication>
+#include <QCursor>
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QPainter>
@@ -53,6 +54,143 @@ QString prettify(QString text)
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Undo
+
+namespace {
+
+constexpr int kEditMergeId = 1;
+
+bool sameState(const std::optional<lemma::Region>& a, const std::optional<lemma::Region>& b)
+{
+    if (!a || !b) {
+        return !a && !b;
+    }
+    return a->x == b->x && a->y == b->y && a->source == b->source;
+}
+
+} // namespace
+
+// One undo step: the regions an edit touched, before and after. A region that is absent
+// on one side was created or removed, so this one command covers every kind of edit.
+class WorksheetCanvas::Change : public QUndoCommand {
+public:
+    Change(WorksheetCanvas* canvas, const QString& text, EditKind kind, RegionStates before, RegionStates after,
+           int session, int caretBefore, int caretAfter)
+        : QUndoCommand(text)
+        , canvas_(canvas)
+        , kind_(kind)
+        , before_(std::move(before))
+        , after_(std::move(after))
+        , session_(session)
+        , caretBefore_(caretBefore)
+        , caretAfter_(caretAfter)
+    {
+    }
+
+    int id() const override { return kind_ == EditKind::Other ? -1 : kEditMergeId; }
+
+    void undo() override { canvas_->restore(before_, editId(), caretBefore_); }
+
+    void redo() override
+    {
+        // The canvas made the change before pushing it.
+        if (pushed_) {
+            pushed_ = false;
+            return;
+        }
+        canvas_->restore(after_, editId(), caretAfter_);
+    }
+
+    bool mergeWith(const QUndoCommand* other) override
+    {
+        // Typing and erasing are always about a single region.
+        const auto* next = static_cast<const Change*>(other);
+        if (next->session_ != session_ || next->before_.front().id != before_.front().id) {
+            return false;
+        }
+        // Removing a region emptied by erasing folds into the erase, so undo brings back its text.
+        const bool removal = !next->after_.front().region;
+        if (!removal && (next->kind_ != kind_ || next->caretBefore_ != caretAfter_)) {
+            return false;
+        }
+        after_ = next->after_;
+        caretAfter_ = next->caretAfter_;
+        setObsolete(sameState(before_.front().region, after_.front().region)); // e.g. typed a space, then left
+        return true;
+    }
+
+private:
+    // Undoing typing puts the caret back in the region.
+    int editId() const { return kind_ == EditKind::Other ? 0 : before_.front().id; }
+
+    WorksheetCanvas* canvas_;
+    EditKind kind_;
+    RegionStates before_;
+    RegionStates after_;
+    int session_;
+    int caretBefore_;
+    int caretAfter_;
+    bool pushed_ = true;
+};
+
+WorksheetCanvas::RegionStates WorksheetCanvas::capture(const QSet<int>& ids) const
+{
+    RegionStates states;
+    for (const int id : ids) {
+        const lemma::Region* r = worksheet_.region(id);
+        states.push_back({id, r ? std::optional(*r) : std::nullopt});
+    }
+    return states;
+}
+
+void WorksheetCanvas::record(const QString& text, RegionStates before, EditKind kind, int caretBefore)
+{
+    RegionStates after;
+    bool changed = false;
+    for (const RegionState& s : before) {
+        const lemma::Region* r = worksheet_.region(s.id);
+        after.push_back({s.id, r ? std::optional(*r) : std::nullopt});
+        changed = changed || !sameState(s.region, after.back().region);
+    }
+    if (changed) {
+        undoStack_.push(new Change(this, text, kind, std::move(before), std::move(after), editSession_, caretBefore, caret_));
+    }
+}
+
+void WorksheetCanvas::restore(const RegionStates& states, int editId, int caret)
+{
+    // Drop any edit or drag as is. Ending an edit normally can push a command, which
+    // mustn't happen from inside undo, and these states are already on the stack.
+    editingId_ = 0;
+    caretBlink_.stop();
+    pressedId_ = 0;
+    dragging_ = bandPressed_ = banding_ = false;
+    updateCursor(viewport()->mapFromGlobal(QCursor::pos()));
+
+    QSet<int> present;
+    for (const RegionState& s : states) {
+        if (!s.region) {
+            worksheet_.removeRegion(s.id);
+        } else if (lemma::Region* r = worksheet_.region(s.id)) {
+            *r = *s.region;
+            present.insert(s.id);
+        } else {
+            worksheet_.restoreRegion(*s.region);
+            present.insert(s.id);
+        }
+    }
+    selection_.clear();
+    contentChanged();
+
+    // Show what changed: the caret for text, a selection for regions.
+    if (editId && worksheet_.region(editId)) {
+        beginEditing(editId, caret);
+    } else {
+        setSelection(present);
+    }
+}
+
 WorksheetCanvas::WorksheetCanvas(QWidget* parent)
     : QAbstractScrollArea(parent)
 {
@@ -62,8 +200,7 @@ WorksheetCanvas::WorksheetCanvas(QWidget* parent)
     errorFont_.setPointSizeF(9);
     errorFont_.setItalic(true);
 
-    viewport()->setCursor(Qt::IBeamCursor);
-    viewport()->setMouseTracking(false);
+    viewport()->setMouseTracking(true); // to pick the cursor on hover
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_InputMethodEnabled);
 
@@ -85,6 +222,7 @@ void WorksheetCanvas::worksheetReset()
     pressedId_ = 0;
     bandPressed_ = banding_ = false;
     selection_.clear();
+    undoStack_.clear();
     crosshair_ = {kMargin, kMargin + kGrid * 2};
     worksheet_.evaluate();
     updateScrollBars();
@@ -327,11 +465,13 @@ void WorksheetCanvas::selectAll()
 
 void WorksheetCanvas::deleteSelection()
 {
+    RegionStates before = capture(selection_);
     for (const int id : std::as_const(selection_)) {
         worksheet_.removeRegion(id);
     }
     selection_.clear();
     contentChanged();
+    record(tr("Delete"), std::move(before));
 }
 
 void WorksheetCanvas::moveSelection(QPointF delta)
@@ -369,6 +509,7 @@ void WorksheetCanvas::beginEditing(int id, int caret)
     }
     setSelection({});
     editingId_ = id;
+    ++editSession_;
     moveCaret(std::clamp(caret, 0, static_cast<int>(fromUtf8(r->source).size())));
 }
 
@@ -379,13 +520,16 @@ void WorksheetCanvas::endEditing()
     }
     const lemma::Region* r = worksheet_.region(editingId_);
     const bool empty = !r || fromUtf8(r->source).trimmed().isEmpty();
+    RegionStates before;
     if (empty) {
+        before = capture({editingId_});
         worksheet_.removeRegion(editingId_);
     }
     editingId_ = 0;
     caretBlink_.stop();
     if (empty) {
         contentChanged();
+        record(tr("Delete"), std::move(before), EditKind::Erasing, caret_);
     } else {
         viewport()->update();
     }
@@ -399,14 +543,18 @@ void WorksheetCanvas::moveCaret(int position)
     viewport()->update();
 }
 
-void WorksheetCanvas::insertText(const QString& text)
+void WorksheetCanvas::insertText(const QString& text, bool created)
 {
+    // A region created for this text didn't exist before it, as far as undo is concerned.
+    RegionStates before = created ? RegionStates{{editingId_, std::nullopt}} : capture({editingId_});
+    const int caretBefore = caret_;
     lemma::Region* r = worksheet_.region(editingId_);
     QString source = fromUtf8(r->source);
     source.insert(caret_, text);
     r->source = source.toStdString();
     moveCaret(caret_ + static_cast<int>(text.size()));
     contentChanged();
+    record(tr("Typing"), std::move(before), EditKind::Typing, caretBefore);
 }
 
 void WorksheetCanvas::eraseAtCaret(bool before)
@@ -425,10 +573,13 @@ void WorksheetCanvas::eraseAtCaret(bool before)
     } else if (!before && source.at(from).isHighSurrogate() && from + 1 < source.size()) {
         ++count;
     }
+    RegionStates previous = capture({editingId_});
+    const int caretBefore = caret_;
     source.remove(from, count);
     r->source = source.toStdString();
     moveCaret(from);
     contentChanged();
+    record(tr("Delete"), std::move(previous), EditKind::Erasing, caretBefore);
 }
 
 void WorksheetCanvas::contentChanged()
@@ -436,7 +587,6 @@ void WorksheetCanvas::contentChanged()
     worksheet_.evaluate();
     updateScrollBars();
     viewport()->update();
-    emit modified();
 }
 
 // ---------------------------------------------------------------------------
@@ -477,8 +627,18 @@ void WorksheetCanvas::mousePressEvent(QMouseEvent* event)
     }
 }
 
+void WorksheetCanvas::updateCursor(QPointF viewportPos)
+{
+    // An I-beam where a click edits text, an arrow on empty page space.
+    viewport()->setCursor(regionAt(toDocument(viewportPos)) ? Qt::IBeamCursor : Qt::ArrowCursor);
+}
+
 void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
 {
+    if (!(event->buttons() & Qt::LeftButton)) {
+        updateCursor(event->position());
+        return;
+    }
     const QPointF pos = toDocument(event->position());
     const bool pastThreshold = (pos - pressPos_).manhattanLength() >= QApplication::startDragDistance();
 
@@ -512,6 +672,7 @@ void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
             setSelection({pressedId_});
         }
         dragging_ = true;
+        dragBefore_ = capture(selection_);
         viewport()->setCursor(Qt::SizeAllCursor);
     }
     if (dragging_) {
@@ -537,12 +698,14 @@ void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
     if (!pressedId_) {
         return;
     }
-    if (!dragging_) {
+    if (dragging_) {
+        record(tr("Move"), std::move(dragBefore_));
+    } else {
         const lemma::Region* r = worksheet_.region(pressedId_);
         beginEditing(pressedId_, caretIndexAt(*r, pressPos_.x()));
     }
-    viewport()->setCursor(Qt::IBeamCursor);
     pressedId_ = 0;
+    updateCursor(event->position());
     dragging_ = false;
 }
 
@@ -610,7 +773,9 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         default: break;
         }
         if (!step.isNull() && !selection_.isEmpty()) {
+            RegionStates before = capture(selection_);
             moveSelection(step); // nudge
+            record(tr("Move"), std::move(before));
             return;
         }
         if (!step.isNull()) {
@@ -632,6 +797,8 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
     if (!editingId_) {
         const int id = worksheet_.addRegion(crosshair_.x(), crosshair_.y());
         beginEditing(id, 0);
+        insertText(text, true);
+        return;
     }
     insertText(text);
 }

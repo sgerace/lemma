@@ -2,6 +2,7 @@
 // delivered straight to the widget, never through the real desktop.
 
 #include "DocumentIO.h"
+#include "MainWindow.h"
 #include "PdfExport.h"
 #include "WorksheetCanvas.h"
 
@@ -212,6 +213,159 @@ private slots:
         QCOMPARE(sheet().region(a)->x, 0.0);
     }
 
+    void typingUndoesAsOneStep()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
+        QCOMPARE(undo()->count(), 1); // the region and everything typed into it
+
+        undo()->undo();
+        QVERIFY(sheet().regions().empty());
+        undo()->redo();
+        QCOMPARE(sheet().regions().size(), 1u);
+        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/m"));
+
+        // Redo leaves the caret at the end, and new typing is a step of its own.
+        QTest::keyClicks(canvas_.get(), "m");
+        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/mm"));
+        QCOMPARE(undo()->count(), 2);
+
+        // Moving the caret starts a new step too.
+        QTest::keyClick(canvas_.get(), Qt::Key_Home);
+        QTest::keyClicks(canvas_.get(), "q");
+        undo()->undo();
+        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/mm"));
+        undo()->undo();
+        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/m"));
+    }
+
+    void erasingUndoesAsOneStep()
+    {
+        const int a = sheet().addRegion(72, 120, "x := 125");
+        canvas_->worksheetReset();
+
+        click(regionPoint(*sheet().region(a), 8));
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 1"));
+
+        undo()->undo();
+        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 125"));
+        undo()->redo();
+        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 1"));
+    }
+
+    void undoBringsBackAnEmptiedRegion()
+    {
+        const int a = sheet().addRegion(72, 120, "ab");
+        canvas_->worksheetReset();
+
+        click(regionPoint(*sheet().region(a), 2));
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QVERIFY(sheet().regions().empty());
+
+        // Erasing and the removal it caused are one step.
+        QCOMPARE(undo()->count(), 1);
+        undo()->undo();
+        QCOMPARE(source(*sheet().region(a)), QStringLiteral("ab"));
+    }
+
+    void deletingRegionsUndoes()
+    {
+        const int use = sheet().addRegion(72, 240, "x =");
+        const int def = sheet().addRegion(72, 120, "x := 5");
+        sheet().addRegion(72, 360, "y := 1");
+        canvas_->worksheetReset();
+
+        drag({48, 96}, {300, 264});
+        QTest::keyClick(canvas_.get(), Qt::Key_Delete);
+        QCOMPARE(sheet().regions().size(), 1u);
+
+        // They come back with their ids and order, selected, and evaluate again.
+        undo()->undo();
+        QCOMPARE(sheet().regions().size(), 3u);
+        QCOMPARE(sheet().regions()[0].id, use);
+        QCOMPARE(sheet().regions()[1].id, def);
+        QCOMPARE(canvas_->selection(), (QSet<int>{use, def}));
+        QCOMPARE(value(*sheet().region(use)), QStringLiteral("5"));
+
+        undo()->redo();
+        QCOMPARE(sheet().regions().size(), 1u);
+        QVERIFY(canvas_->selection().isEmpty());
+    }
+
+    void movingRegionsUndoes()
+    {
+        const int use = sheet().addRegion(72, 120, "x =");
+        const int def = sheet().addRegion(72, 240, "x := 5");
+        canvas_->worksheetReset();
+
+        drag(regionPoint(*sheet().region(def), 1), regionPoint(*sheet().region(def), 1) - QPointF(0, 180));
+        QCOMPARE(value(*sheet().region(use)), QStringLiteral("5"));
+        QCOMPARE(undo()->count(), 1); // one step for the whole drag
+
+        undo()->undo();
+        QCOMPARE(sheet().region(def)->y, 240.0);
+        QCOMPARE(QString::fromStdString(sheet().region(use)->result.error), QStringLiteral("x is not defined"));
+
+        // Each nudge is its own step.
+        QTest::keyClick(canvas_.get(), Qt::Key_A, Qt::ControlModifier);
+        QTest::keyClick(canvas_.get(), Qt::Key_Right);
+        QTest::keyClick(canvas_.get(), Qt::Key_Right);
+        undo()->undo();
+        QCOMPARE(sheet().region(def)->x, 72.0 + WorksheetCanvas::kGrid);
+        QCOMPARE(sheet().region(use)->x, 72.0 + WorksheetCanvas::kGrid);
+    }
+
+    void undoingToTheSavedStateClearsModified()
+    {
+        canvas_.reset();
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QVERIFY(window.openFile(QStringLiteral(LEMMA_EXAMPLES_DIR "/cantilever-beam.lemma")));
+        auto* canvas = window.findChild<WorksheetCanvas*>();
+        QVERIFY(!window.isWindowModified());
+
+        QTest::mouseClick(canvas->viewport(), Qt::LeftButton, {}, canvas->viewportPosition({72, 960}).toPoint());
+        QTest::keyClicks(canvas, "1");
+        QVERIFY(window.isWindowModified());
+
+        QTest::keySequence(&window, QKeySequence::Undo);
+        QVERIFY(!window.isWindowModified());
+        QTest::keySequence(&window, QKeySequence::Redo);
+        QVERIFY(window.isWindowModified());
+
+        // Ctrl+Y (Cmd+Y on macOS) redoes on every platform, and is the one the menu shows.
+        const auto actions = window.findChildren<QAction*>();
+        const auto redo = std::find_if(actions.begin(), actions.end(),
+                                       [](QAction* a) { return a->text().startsWith(QStringLiteral("&Redo")); });
+        QVERIFY(redo != actions.end());
+        QCOMPARE((*redo)->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_Y));
+        QTest::keySequence(&window, QKeySequence::Undo);
+        QVERIFY(!window.isWindowModified());
+        QTest::keyClick(&window, Qt::Key_Y, Qt::ControlModifier);
+        QVERIFY(window.isWindowModified());
+    }
+
+    void cursorIsAnIBeamOnlyOverRegions()
+    {
+        const int a = sheet().addRegion(72, 120, "x := 5");
+        canvas_->worksheetReset();
+        QWidget* viewport = canvas_->viewport();
+
+        QTest::mouseMove(viewport, canvas_->viewportPosition(regionPoint(*sheet().region(a), 1)).toPoint());
+        QCOMPARE(viewport->cursor().shape(), Qt::IBeamCursor);
+        QTest::mouseMove(viewport, canvas_->viewportPosition({480, 600}).toPoint());
+        QCOMPARE(viewport->cursor().shape(), Qt::ArrowCursor);
+
+        // After a drag, the cursor goes back to what is under the mouse.
+        drag(regionPoint(*sheet().region(a), 1), regionPoint(*sheet().region(a), 1) + QPointF(0, 120));
+        QCOMPARE(viewport->cursor().shape(), Qt::IBeamCursor);
+    }
+
     void saveAndLoadRoundTrip()
     {
         sheet().addRegion(72, 96, "L := 2.5 m");
@@ -299,6 +453,7 @@ private slots:
 
 private:
     lemma::Worksheet& sheet() { return canvas_->worksheet(); }
+    QUndoStack* undo() { return canvas_->undoStack(); }
 
     void click(QPointF docPos)
     {
