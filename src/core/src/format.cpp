@@ -65,4 +65,15 @@ std::string formatQuantity(const Quantity& q, const FormatOptions& options)
     return formatNumber(q.value, options) + " " + q.dim.toString();
 }
 
+std::string describeDimension(const Dimension& dim)
+{
+    if (dim.isDimensionless()) {
+        return "unitless";
+    }
+    if (const Unit* unit = UnitRegistry::instance().preferredFor(dim)) {
+        return unit->name;
+    }
+    return dim.toString();
+}
+
 } // namespace lemma

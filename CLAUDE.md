@@ -11,8 +11,11 @@ cmake --build build/debug
 ctest --test-dir build/debug --output-on-failure
 ```
 
-- Executables land in the build directory's root, not a subdirectory, because
-  `qt_standard_project_setup()` sets the runtime output directory.
+- On Windows, executables land in the build directory's root, because
+  `qt_standard_project_setup()` sets the runtime output directory there (Windows only,
+  so the Qt DLLs resolve). On macOS and Linux they stay in their subdirectories:
+  the app is `src/app/lemma.app` (a bundle) on macOS or `src/app/lemma` on Linux, and
+  the tests are in `tests/`.
 - ctest runs the GUI tests with `QT_QPA_PLATFORM=offscreen` and Qt's DLL folder on PATH.
   Running a test binary directly needs both.
 - Qt Test console output may not appear in some shells (e.g. Git Bash). Use

@@ -45,9 +45,8 @@ RegionResult evaluateRegion(const std::string& source, Environment& env, const F
             if (s.unit) {
                 const Quantity unit = evaluate(*s.unit, env, Lookup::UnitsFirst);
                 if (!(unit.dim == q.dim)) {
-                    const auto name = [](const Dimension& d) { return d.isDimensionless() ? "unitless" : d.toString(); };
-                    throw Error("Units don't match: the result is " + name(q.dim) + ", but " + s.unitText + " is " +
-                                    name(unit.dim),
+                    throw Error("Units don't match: the result is " + describeDimension(q.dim) + ", but " +
+                                    s.unitText + " is " + describeDimension(unit.dim),
                                 s.unit->begin, s.unit->end);
                 }
                 if (unit.value == 0.0) {

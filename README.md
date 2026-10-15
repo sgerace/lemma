@@ -67,7 +67,9 @@ build and run the `lemma` target.
 
 The `debug` and `release` presets in `CMakePresets.json` use Ninja. Point CMake at your
 Qt and compiler, either on the command line or in a personal `CMakeUserPresets.json`
-(gitignored), e.g. for the Qt online installer's MinGW kit on Windows:
+(gitignored).
+
+**Windows**, e.g. with the Qt online installer's MinGW kit:
 
 ```sh
 cmake --preset debug -DCMAKE_PREFIX_PATH=C:/Qt/6.12.0/mingw_64
@@ -75,11 +77,30 @@ cmake --build build/debug
 ctest --test-dir build/debug --output-on-failure
 ```
 
-Run the app with an example (on Windows, Qt's `bin` folder must be on `PATH`):
+Run the app with an example (Qt's `bin` folder must be on `PATH`):
 
 ```sh
 build/debug/lemma examples/cantilever-beam.lemma
 ```
+
+**macOS**, with the Qt online installer's default location:
+
+```sh
+cmake --preset debug -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/macos
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+The app is built as a bundle. Launch it with `open`, or run the binary inside the
+bundle to see console output in the terminal:
+
+```sh
+open build/debug/src/app/lemma.app --args "$PWD/examples/cantilever-beam.lemma"
+build/debug/src/app/lemma.app/Contents/MacOS/lemma examples/cantilever-beam.lemma
+```
+
+If CMake can't find Ninja, install it (`brew install ninja`) or add Qt's copy in
+`~/Qt/Tools/Ninja` to `PATH`.
 
 The GUI tests run on Qt's offscreen platform, so they never touch the desktop.
 
