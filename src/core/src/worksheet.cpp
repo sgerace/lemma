@@ -21,6 +21,13 @@ std::string trim(std::string_view s)
     return std::string(s.substr(first, last - first + 1));
 }
 
+// Typing ':' inserts ":=" right at the caret, so "w:= 2" is common. Show definitions with
+// one space on each side, as Mathcad lays them out, whatever the source spacing.
+std::string definitionDisplay(std::string_view source, const Statement& s)
+{
+    return trim(source.substr(0, s.assignPos)) + " := " + trim(source.substr(s.assignPos + 2));
+}
+
 RegionResult evaluateRegion(const std::string& source, Environment& env, const FormatOptions& format)
 {
     RegionResult result;
@@ -36,9 +43,11 @@ RegionResult evaluateRegion(const std::string& source, Environment& env, const F
             break;
         case Statement::Kind::Definition:
             env.define(s.name, evaluate(*s.expr, env));
+            result.display = definitionDisplay(source, s);
             break;
         case Statement::Kind::FunctionDefinition:
             env.defineFunction(s.name, {s.params, s.expr, std::make_shared<Environment>(env)});
+            result.display = definitionDisplay(source, s);
             break;
         case Statement::Kind::Evaluation: {
             const Quantity q = evaluate(*s.expr, env);
