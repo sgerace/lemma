@@ -7,12 +7,17 @@
 #include <QPointF>
 #include <QSet>
 #include <QTimer>
+#include <QUndoStack>
+
+#include <optional>
+#include <vector>
 
 class QPainter;
 
 // The page view: math regions placed freely on US Letter pages, Mathcad style.
 // Click anywhere to move the red crosshair, then type to start a region there.
 // Drag on empty space or Shift+click to select regions, then drag, nudge or delete them.
+// Every edit goes through undoStack(), which is clean while the worksheet is unmodified.
 //
 // Document coordinates are in 1/96 inch, with (0, 0) at the top-left of the first page.
 class WorksheetCanvas : public QAbstractScrollArea {
@@ -27,8 +32,9 @@ public:
     explicit WorksheetCanvas(QWidget* parent = nullptr);
 
     lemma::Worksheet& worksheet() { return worksheet_; }
+    QUndoStack* undoStack() { return &undoStack_; }
 
-    // Call after replacing the worksheet's contents (new document, file loaded).
+    // Call after replacing the worksheet's contents (new document, file loaded). Clears undo.
     void worksheetReset();
 
     // Where a document point currently appears in the viewport.
@@ -45,9 +51,6 @@ public:
     int pageCount() const;
     void renderPage(QPainter& painter, int page) const;
 
-signals:
-    void modified();
-
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -59,6 +62,25 @@ protected:
     void scrollContentsBy(int dx, int dy) override;
 
 private:
+    class Change;
+
+    // A region as it was at some point; absent if it didn't exist then.
+    struct RegionState {
+        int id = 0;
+        std::optional<lemma::Region> region;
+    };
+    using RegionStates = std::vector<RegionState>;
+
+    // Typing and erasing in one region merge into a single undo step.
+    enum class EditKind { Other, Typing, Erasing };
+
+    RegionStates capture(const QSet<int>& ids) const;
+    // Pushes an undo step from `before` to the current state of the same regions, if
+    // anything changed. The change has already been made.
+    void record(const QString& text, RegionStates before, EditKind kind = EditKind::Other, int caretBefore = 0);
+    // Puts regions back as they were, for undo and redo.
+    void restore(const RegionStates& states, int editId, int caret);
+
     QPointF pageOrigin() const;
     QPointF toDocument(QPointF viewportPos) const;
     static QPointF snap(QPointF pos);
@@ -69,6 +91,7 @@ private:
     QRectF regionRect(const lemma::Region& r) const;
     int regionAt(QPointF docPos) const;
     int caretIndexAt(const lemma::Region& r, double docX) const;
+    void updateCursor(QPointF viewportPos);
 
     void paintRegions(QPainter& painter, bool onScreen) const;
 
@@ -80,7 +103,7 @@ private:
 
     void beginEditing(int id, int caret);
     void endEditing();
-    void insertText(const QString& text);
+    void insertText(const QString& text, bool created = false);
     void eraseAtCaret(bool before);
     void moveCaret(int position);
     void contentChanged();
@@ -96,6 +119,7 @@ private:
     int caret_ = 0; // UTF-16 index into the region's source
     bool caretVisible_ = true;
     QTimer caretBlink_;
+    int editSession_ = 0; // bumped on each beginEditing, so separate edits don't merge
 
     QSet<int> selection_;
 
@@ -103,10 +127,13 @@ private:
     QPointF pressPos_;
     QPointF pressRegionPos_;
     bool dragging_ = false;
+    RegionStates dragBefore_;
 
     // Rubber-band selection, from a press on empty page space.
     bool bandPressed_ = false;
     bool banding_ = false;
     QRectF band_;
     QSet<int> bandBase_; // selection kept under the band (Shift held)
+
+    QUndoStack undoStack_;
 };

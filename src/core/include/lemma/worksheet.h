@@ -35,9 +35,12 @@ class Worksheet {
 public:
     int addRegion(double x, double y, std::string source = {});
     void removeRegion(int id);
+    // Puts back a removed region with its id and its place in the order (for undo).
+    void restoreRegion(Region region);
     void clear();
 
     Region* region(int id);
+    const Region* region(int id) const;
     const std::vector<Region>& regions() const { return regions_; }
 
     // Recomputes every region's result.

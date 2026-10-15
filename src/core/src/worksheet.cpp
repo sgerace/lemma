@@ -89,6 +89,15 @@ void Worksheet::removeRegion(int id)
     std::erase_if(regions_, [id](const Region& r) { return r.id == id; });
 }
 
+void Worksheet::restoreRegion(Region region)
+{
+    // Regions are kept in id order, which is also their stacking and tie-break order.
+    const auto it = std::lower_bound(regions_.begin(), regions_.end(), region.id,
+                                     [](const Region& r, int id) { return r.id < id; });
+    nextId_ = std::max(nextId_, region.id + 1);
+    regions_.insert(it, std::move(region));
+}
+
 void Worksheet::clear()
 {
     regions_.clear();
@@ -98,6 +107,11 @@ Region* Worksheet::region(int id)
 {
     const auto it = std::find_if(regions_.begin(), regions_.end(), [id](const Region& r) { return r.id == id; });
     return it == regions_.end() ? nullptr : &*it;
+}
+
+const Region* Worksheet::region(int id) const
+{
+    return const_cast<Worksheet*>(this)->region(id);
 }
 
 void Worksheet::evaluate()
