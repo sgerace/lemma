@@ -129,6 +129,8 @@ void MainWindow::showQuickReference()
         "<tr><td><code>10 N/m</code></td><td>A space multiplies, like <code>*</code></td></tr>"
         "</table>"
         "<p>Worksheets calculate top to bottom, then left to right. Drag a region to move it.</p>"
+        "<p>Drag on empty space or Shift+click to select regions (Ctrl+A selects all). "
+        "Drag or use the arrow keys to move the selection; Delete removes it.</p>"
         "<p>Built-ins: sqrt, abs, sin, cos, tan, asin, acos, atan, ln, log, exp, min, max; "
         "π (or pi), e, and g (gravity; grams are <code>gm</code>).</p>"));
 }

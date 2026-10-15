@@ -21,6 +21,7 @@ const QColor kHintColor(0x80, 0x88, 0x94);
 const QColor kErrorColor(0xc6, 0x28, 0x28);
 const QColor kEditBoxColor(0x5b, 0x8d, 0xd9);
 const QColor kGuideColor(0xc8, 0xcc, 0xd2);
+const QColor kSelectionFill(0x5b, 0x8d, 0xd9, 0x30);
 
 QString fromUtf8(const std::string& s)
 {
@@ -82,6 +83,8 @@ void WorksheetCanvas::worksheetReset()
     editingId_ = 0;
     caretBlink_.stop();
     pressedId_ = 0;
+    bandPressed_ = banding_ = false;
+    selection_.clear();
     crosshair_ = {kMargin, kMargin + kGrid * 2};
     worksheet_.evaluate();
     updateScrollBars();
@@ -237,6 +240,12 @@ void WorksheetCanvas::paintRegions(QPainter& painter, bool onScreen) const
             painter.drawText(QPointF(r.x, r.y + fm.descent() + 2 + efm.ascent()), fromUtf8(r.result.error));
         }
 
+        if (onScreen && selection_.contains(r.id)) {
+            painter.setPen(QPen(kEditBoxColor, 1.0));
+            painter.setBrush(kSelectionFill);
+            painter.drawRect(regionRect(r).adjusted(-3, -2, 3, 2));
+        }
+
         if (onScreen && r.id == editingId_) {
             painter.setPen(QPen(kEditBoxColor, 1.0));
             painter.setBrush(Qt::NoBrush);
@@ -271,6 +280,12 @@ void WorksheetCanvas::paintEvent(QPaintEvent*)
 
     paintRegions(painter, true);
 
+    if (banding_) {
+        painter.setPen(QPen(kEditBoxColor, 1.0, Qt::DashLine));
+        painter.setBrush(kSelectionFill);
+        painter.drawRect(band_);
+    }
+
     if (!editingId_ && hasFocus()) {
         painter.setPen(QPen(kErrorColor, 1.0));
         const QPointF c = crosshair_;
@@ -290,6 +305,57 @@ void WorksheetCanvas::renderPage(QPainter& painter, int page) const
 }
 
 // ---------------------------------------------------------------------------
+// Selection
+
+void WorksheetCanvas::setSelection(const QSet<int>& ids)
+{
+    if (ids != selection_) {
+        selection_ = ids;
+        viewport()->update();
+    }
+}
+
+void WorksheetCanvas::selectAll()
+{
+    endEditing();
+    QSet<int> all;
+    for (const lemma::Region& r : worksheet_.regions()) {
+        all.insert(r.id);
+    }
+    setSelection(all);
+}
+
+void WorksheetCanvas::deleteSelection()
+{
+    for (const int id : std::as_const(selection_)) {
+        worksheet_.removeRegion(id);
+    }
+    selection_.clear();
+    contentChanged();
+}
+
+void WorksheetCanvas::moveSelection(QPointF delta)
+{
+    double dx = delta.x();
+    double dy = delta.y();
+    for (const int id : std::as_const(selection_)) {
+        const lemma::Region* r = worksheet_.region(id);
+        // min() with 0 so a region already past the edge never forces a move.
+        dx = std::max(dx, std::min(0.0, -r->x));
+        dy = std::max(dy, std::min(0.0, kGrid - r->y));
+    }
+    if (dx == 0.0 && dy == 0.0) {
+        return;
+    }
+    for (const int id : std::as_const(selection_)) {
+        lemma::Region* r = worksheet_.region(id);
+        r->x += dx;
+        r->y += dy;
+    }
+    contentChanged(); // moving regions can change evaluation order
+}
+
+// ---------------------------------------------------------------------------
 // Editing
 
 void WorksheetCanvas::beginEditing(int id, int caret)
@@ -301,6 +367,7 @@ void WorksheetCanvas::beginEditing(int id, int caret)
     if (!r) {
         return;
     }
+    setSelection({});
     editingId_ = id;
     moveCaret(std::clamp(caret, 0, static_cast<int>(fromUtf8(r->source).size())));
 }
@@ -381,41 +448,93 @@ void WorksheetCanvas::mousePressEvent(QMouseEvent* event)
         return;
     }
     const QPointF pos = toDocument(event->position());
+    const bool shift = event->modifiers() & Qt::ShiftModifier;
+    pressPos_ = pos;
     if (const int id = regionAt(pos)) {
+        if (shift) {
+            endEditing();
+            if (worksheet_.region(id)) { // ending the edit removes an emptied region
+                QSet<int> ids = selection_;
+                if (!ids.remove(id)) {
+                    ids.insert(id);
+                }
+                setSelection(ids);
+            }
+            return;
+        }
         const lemma::Region* r = worksheet_.region(id);
         pressedId_ = id;
-        pressPos_ = pos;
         pressRegionPos_ = {r->x, r->y};
         dragging_ = false;
         return;
     }
     endEditing();
-    crosshair_ = snap(pos);
-    viewport()->update();
+    bandPressed_ = true;
+    banding_ = false;
+    bandBase_ = shift ? selection_ : QSet<int>{};
+    if (!shift) {
+        setSelection({});
+    }
 }
 
 void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
 {
+    const QPointF pos = toDocument(event->position());
+    const bool pastThreshold = (pos - pressPos_).manhattanLength() >= QApplication::startDragDistance();
+
+    if (bandPressed_) {
+        banding_ = banding_ || pastThreshold;
+        if (banding_) {
+            band_ = QRectF(pressPos_, pos).normalized();
+            QSet<int> ids = bandBase_;
+            for (const lemma::Region& r : worksheet_.regions()) {
+                if (regionRect(r).intersects(band_)) {
+                    ids.insert(r.id);
+                }
+            }
+            setSelection(ids);
+            viewport()->update();
+        }
+        return;
+    }
+
     if (!pressedId_) {
         return;
     }
-    const QPointF delta = toDocument(event->position()) - pressPos_;
-    if (!dragging_ && delta.manhattanLength() >= QApplication::startDragDistance()) {
+    if (!dragging_ && pastThreshold) {
+        // Dragging a region outside the selection drags just that region.
+        if (!selection_.contains(pressedId_)) {
+            endEditing();
+            if (!worksheet_.region(pressedId_)) {
+                pressedId_ = 0; // it was empty, and ending the edit removed it
+                return;
+            }
+            setSelection({pressedId_});
+        }
         dragging_ = true;
         viewport()->setCursor(Qt::SizeAllCursor);
     }
     if (dragging_) {
-        lemma::Region* r = worksheet_.region(pressedId_);
-        const QPointF moved = snap(pressRegionPos_ + delta);
-        r->x = std::max(0.0, moved.x());
-        r->y = std::max(kGrid, moved.y());
-        contentChanged(); // moving a region can change evaluation order
+        // Snap the grabbed region to the grid and carry the rest of the selection along.
+        const lemma::Region* r = worksheet_.region(pressedId_);
+        moveSelection(snap(pressRegionPos_ + (pos - pressPos_)) - QPointF(r->x, r->y));
     }
 }
 
 void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() != Qt::LeftButton || !pressedId_) {
+    if (event->button() != Qt::LeftButton) {
+        return;
+    }
+    if (bandPressed_) {
+        if (!banding_) {
+            crosshair_ = snap(pressPos_); // a plain click on empty space
+        }
+        bandPressed_ = banding_ = false;
+        viewport()->update();
+        return;
+    }
+    if (!pressedId_) {
         return;
     }
     if (!dragging_) {
@@ -429,6 +548,10 @@ void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
 
 void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
 {
+    if (event->matches(QKeySequence::SelectAll)) {
+        selectAll();
+        return;
+    }
     if (editingId_) {
         const lemma::Region* r = worksheet_.region(editingId_);
         const int length = static_cast<int>(fromUtf8(r->source).size());
@@ -465,6 +588,19 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
             break;
         }
     } else {
+        if (!selection_.isEmpty()) {
+            switch (event->key()) {
+            case Qt::Key_Delete:
+            case Qt::Key_Backspace:
+                deleteSelection();
+                return;
+            case Qt::Key_Escape:
+                setSelection({});
+                return;
+            default:
+                break;
+            }
+        }
         QPointF step;
         switch (event->key()) {
         case Qt::Key_Left: step = {-kGrid, 0}; break;
@@ -472,6 +608,10 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         case Qt::Key_Up: step = {0, -kGrid}; break;
         case Qt::Key_Down: step = {0, kGrid}; break;
         default: break;
+        }
+        if (!step.isNull() && !selection_.isEmpty()) {
+            moveSelection(step); // nudge
+            return;
         }
         if (!step.isNull()) {
             crosshair_ = QPointF(std::max(0.0, crosshair_.x() + step.x()), std::max(kGrid, crosshair_.y() + step.y()));

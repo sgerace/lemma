@@ -122,6 +122,96 @@ private slots:
         QCOMPARE(value(*sheet().region(use)), QStringLiteral("5"));
     }
 
+    void rubberBandSelectsAndDeleteRemoves()
+    {
+        const int a = sheet().addRegion(72, 120, "a := 1");
+        const int b = sheet().addRegion(72, 240, "b := 2");
+        const int c = sheet().addRegion(480, 120, "c := 3");
+        canvas_->worksheetReset();
+
+        drag({48, 96}, {300, 264});
+        QCOMPARE(canvas_->selection(), (QSet<int>{a, b}));
+
+        QTest::keyClick(canvas_.get(), Qt::Key_Delete);
+        QCOMPARE(sheet().regions().size(), 1u);
+        QCOMPARE(sheet().regions()[0].id, c);
+        QVERIFY(canvas_->selection().isEmpty());
+    }
+
+    void shiftClickTogglesSelection()
+    {
+        const int a = sheet().addRegion(72, 120, "a := 1");
+        const int b = sheet().addRegion(72, 240, "b := 2");
+        canvas_->worksheetReset();
+
+        shiftClick(regionPoint(*sheet().region(a), 1));
+        shiftClick(regionPoint(*sheet().region(b), 1));
+        QCOMPARE(canvas_->selection(), (QSet<int>{a, b}));
+
+        shiftClick(regionPoint(*sheet().region(a), 1));
+        QCOMPARE(canvas_->selection(), QSet<int>{b});
+
+        // Shift+drag on empty space adds to the selection rather than replacing it.
+        drag({48, 96}, {300, 132}, Qt::ShiftModifier);
+        QCOMPARE(canvas_->selection(), (QSet<int>{a, b}));
+
+        // A plain click on empty space clears it and still moves the crosshair.
+        click({480, 600});
+        QVERIFY(canvas_->selection().isEmpty());
+        QTest::keyClicks(canvas_.get(), "1");
+        QCOMPARE(sheet().regions().back().x, 480.0);
+        QCOMPARE(sheet().regions().back().y, 600.0);
+    }
+
+    void draggingASelectionMovesItTogether()
+    {
+        const int use = sheet().addRegion(72, 120, "x + y =");
+        const int x = sheet().addRegion(72, 240, "x := 5");
+        const int y = sheet().addRegion(300, 240, "y := 1");
+        canvas_->worksheetReset();
+        QCOMPARE(value(*sheet().region(use)), QString());
+
+        shiftClick(regionPoint(*sheet().region(x), 1));
+        shiftClick(regionPoint(*sheet().region(y), 1));
+        drag(regionPoint(*sheet().region(x), 1), regionPoint(*sheet().region(x), 1) - QPointF(0, 180));
+
+        QCOMPARE(sheet().region(x)->y, 60.0);
+        QCOMPARE(sheet().region(y)->y, 60.0);
+        QCOMPARE(sheet().region(x)->x, 72.0);
+        QCOMPARE(sheet().region(y)->x, 300.0);
+        QCOMPARE(sheet().region(use)->y, 120.0);
+        QCOMPARE(value(*sheet().region(use)), QStringLiteral("6")); // evaluation order follows the move
+    }
+
+    void selectAllAndArrowKeysNudge()
+    {
+        const int a = sheet().addRegion(72, 120, "a := 1");
+        const int b = sheet().addRegion(300, 240, "b := 2");
+        canvas_->worksheetReset();
+
+        QTest::keyClick(canvas_.get(), Qt::Key_A, Qt::ControlModifier);
+        QCOMPARE(canvas_->selection(), (QSet<int>{a, b}));
+
+        QTest::keyClick(canvas_.get(), Qt::Key_Right);
+        QTest::keyClick(canvas_.get(), Qt::Key_Down);
+        QCOMPARE(sheet().region(a)->x, 72.0 + WorksheetCanvas::kGrid);
+        QCOMPARE(sheet().region(a)->y, 120.0 + WorksheetCanvas::kGrid);
+        QCOMPARE(sheet().region(b)->x, 300.0 + WorksheetCanvas::kGrid);
+
+        // The group stops as a whole at the page edge, keeping its layout.
+        for (int i = 0; i < 20; ++i) {
+            QTest::keyClick(canvas_.get(), Qt::Key_Left);
+        }
+        QCOMPARE(sheet().region(a)->x, 0.0);
+        QCOMPARE(sheet().region(b)->x, 228.0);
+
+        // Escape clears the selection, and arrows go back to moving the crosshair.
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QVERIFY(canvas_->selection().isEmpty());
+        QTest::keyClick(canvas_.get(), Qt::Key_Right);
+        QCOMPARE(sheet().region(a)->x, 0.0);
+    }
+
     void saveAndLoadRoundTrip()
     {
         sheet().addRegion(72, 96, "L := 2.5 m");
@@ -201,6 +291,7 @@ private slots:
         QTest::keyClicks(canvas_.get(), "w L^4 / (8 E I) = mm");
         QTest::keyClick(canvas_.get(), Qt::Key_Return);
         QTest::keyClicks(canvas_.get(), "w L + 1 kg =");
+        shiftClick(regionPoint(sheet().regions()[1], 1)); // selection shows on screen, not in the PDF
 
         QVERIFY(canvas_->grab().save(dir + "/canvas.png"));
         QVERIFY(exportPdf(*canvas_, dir + "/canvas.pdf", "snapshot"));
@@ -212,6 +303,24 @@ private:
     void click(QPointF docPos)
     {
         QTest::mouseClick(canvas_->viewport(), Qt::LeftButton, {}, canvas_->viewportPosition(docPos).toPoint());
+    }
+
+    void shiftClick(QPointF docPos)
+    {
+        QTest::mouseClick(canvas_->viewport(), Qt::LeftButton, Qt::ShiftModifier,
+                          canvas_->viewportPosition(docPos).toPoint());
+    }
+
+    // Press, move past the drag threshold, and release, all in document coordinates.
+    void drag(QPointF fromDoc, QPointF toDoc, Qt::KeyboardModifiers modifiers = {})
+    {
+        QWidget* viewport = canvas_->viewport();
+        const QPoint from = canvas_->viewportPosition(fromDoc).toPoint();
+        const QPoint to = canvas_->viewportPosition(toDoc).toPoint();
+        QTest::mousePress(viewport, Qt::LeftButton, modifiers, from);
+        QTest::mouseMove(viewport, (from + to) / 2);
+        QTest::mouseMove(viewport, to);
+        QTest::mouseRelease(viewport, Qt::LeftButton, modifiers, to);
     }
 
     // A point inside a region, just after its first `chars` characters.
