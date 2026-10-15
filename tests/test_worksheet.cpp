@@ -58,6 +58,15 @@ TEST_CASE("Definitions carry units through calculations")
     CHECK(last(ws).display == "L·F = 20 J");
 }
 
+TEST_CASE("Definitions display with one space around :=")
+{
+    CHECK(last(sheet({"w:= 2 kN/m"})).display == "w := 2 kN/m");
+    CHECK(last(sheet({"w:=2 kN/m"})).display == "w := 2 kN/m");
+    CHECK(last(sheet({"w  :=   2 kN/m"})).display == "w := 2 kN/m");
+    CHECK(last(sheet({"w := (1 + 2) kN/m"})).display == "w := (1 + 2) kN/m");
+    CHECK(last(sheet({"f(x, y):=x y"})).display == "f(x, y) := x y");
+}
+
 TEST_CASE("Results can be shown in a chosen unit")
 {
     CHECK(lastValue({"10 ft = m"}) == "3.048 m");

@@ -39,6 +39,7 @@ struct Statement {
     NodePtr expr;
     NodePtr unit;                    // Evaluation: optional display unit
     std::size_t equalsPos = 0;       // Evaluation: byte offset of '='
+    std::size_t assignPos = 0;       // Definition, FunctionDefinition: byte offset of ':='
     std::string unitText;            // Evaluation: display unit as typed
 };
 

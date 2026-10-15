@@ -157,7 +157,7 @@ public:
         if (peek().kind == Token::Kind::Identifier && peek(1).kind == Token::Kind::Assign) {
             s.kind = Statement::Kind::Definition;
             s.name = next().text;
-            next();
+            s.assignPos = next().begin;
             s.expr = expression();
         } else if (isFunctionDefinition()) {
             s.kind = Statement::Kind::FunctionDefinition;
@@ -169,7 +169,7 @@ public:
                 } while (accept(Token::Kind::Comma));
             }
             expect(Token::Kind::RParen, "Expected ')'");
-            expect(Token::Kind::Assign, "Expected ':='");
+            s.assignPos = expect(Token::Kind::Assign, "Expected ':='").begin;
             s.expr = expression();
         } else {
             s.kind = Statement::Kind::Expression;

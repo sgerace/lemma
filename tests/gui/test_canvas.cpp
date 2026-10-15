@@ -74,6 +74,28 @@ private slots:
         QCOMPARE(value(sheet().regions()[1]), QStringLiteral("15 kN"));
     }
 
+    void definitionsDisplayWithSpacingAroundAssign()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
+        QTest::keyClick(canvas_.get(), Qt::Key_Return);
+        QTest::keyClicks(canvas_.get(), "v:3 m");
+        QTest::keyClick(canvas_.get(), Qt::Key_Return);
+
+        // Only the display is normalized; the source keeps the spacing as typed.
+        const auto& regions = sheet().regions();
+        QCOMPARE(regions.size(), 2u);
+        QCOMPARE(source(regions[0]), QStringLiteral("w:= 2 kN/m"));
+        QCOMPARE(source(regions[1]), QStringLiteral("v:=3 m"));
+        QCOMPARE(QString::fromStdString(regions[0].result.display), QStringLiteral("w := 2 kN/m"));
+        QCOMPARE(QString::fromStdString(regions[1].result.display), QStringLiteral("v := 3 m"));
+
+        // Clicking places the caret by source position, unaffected by the display spacing.
+        click(regionPoint(sheet().regions()[1], 4)); // just after "v:=3"
+        QTest::keyClicks(canvas_.get(), "0");
+        QCOMPARE(source(sheet().regions()[1]), QStringLiteral("v:=30 m"));
+    }
+
     void caretMovementAndDeletion()
     {
         click({72, 480});
