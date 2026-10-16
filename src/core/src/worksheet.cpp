@@ -79,6 +79,21 @@ RegionResult evaluateRegion(const std::string& source, Environment& env, const F
     return result;
 }
 
+RegionResult evaluatePlotRegion(const Region& r, const Environment& env)
+{
+    RegionResult result;
+    try {
+        result.plot = evaluatePlot(r.source, r.axes, env);
+        result.status = RegionResult::Status::Ok;
+    } catch (const Error& e) {
+        result.status = RegionResult::Status::Error;
+        result.error = e.what();
+        result.errorBegin = e.begin();
+        result.errorEnd = e.end();
+    }
+    return result;
+}
+
 } // namespace
 
 int Worksheet::addRegion(double x, double y, std::string source)
@@ -98,6 +113,16 @@ int Worksheet::addTextRegion(double x, double y, double width, std::string text)
     Region& r = regions_.back();
     r.kind = Region::Kind::Text;
     r.width = width;
+    return id;
+}
+
+int Worksheet::addPlotRegion(double x, double y, double width, double height, std::string traces)
+{
+    const int id = addRegion(x, y, std::move(traces));
+    Region& r = regions_.back();
+    r.kind = Region::Kind::Plot;
+    r.width = width;
+    r.height = height;
     return id;
 }
 
@@ -136,7 +161,7 @@ void Worksheet::evaluate()
     std::vector<Region*> order;
     order.reserve(regions_.size());
     for (Region& r : regions_) {
-        if (r.kind == Region::Kind::Math) {
+        if (r.kind != Region::Kind::Text) {
             order.push_back(&r);
         } else {
             r.result = {};
@@ -148,7 +173,7 @@ void Worksheet::evaluate()
 
     Environment env;
     for (Region* r : order) {
-        r->result = evaluateRegion(r->source, env, format);
+        r->result = r->kind == Region::Kind::Plot ? evaluatePlotRegion(*r, env) : evaluateRegion(r->source, env, format);
     }
 }
 
