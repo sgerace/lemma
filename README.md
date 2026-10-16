@@ -26,6 +26,10 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
 - **Text regions:** type `"` at the crosshair for a heading or note. Enter starts a new
   line, Escape finishes, and dragging the right edge sets where the text wraps. Text is
   never evaluated.
+- **X-Y plots:** type `@` at the crosshair, then a function name like `f` (or
+  expressions such as `f, sin(x) / 2`). Tab steps through the x variable and the axis
+  limits; empty y limits fit the data. Limits can carry units, e.g. `0 m` to `200 mm`.
+  Drag the corner to resize.
 - **Portable files:** `.lemma` files are versioned JSON, so they're human-readable and
   diff well in version control.
 - **PDF export** of the page layout, US Letter.

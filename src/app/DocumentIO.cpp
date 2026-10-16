@@ -11,8 +11,9 @@
 namespace {
 
 constexpr auto kFormat = "lemma-worksheet";
-// 2: text regions. Version 1 readers would silently drop them, so they must refuse the file.
-constexpr int kVersion = 2;
+// 2: text regions; 3: plot regions. Older readers would silently drop them, so they must
+// refuse the file.
+constexpr int kVersion = 3;
 
 } // namespace
 
@@ -22,7 +23,21 @@ bool save(const lemma::Worksheet& worksheet, const QString& path, QString* error
 {
     QJsonArray regions;
     for (const lemma::Region& r : worksheet.regions()) {
-        if (r.kind == lemma::Region::Kind::Text) {
+        if (r.kind == lemma::Region::Kind::Plot) {
+            regions.append(QJsonObject{
+                {"type", "plot"},
+                {"x", r.x},
+                {"y", r.y},
+                {"width", r.width},
+                {"height", r.height},
+                {"traces", QString::fromStdString(r.source)},
+                {"xVariable", QString::fromStdString(r.axes.x)},
+                {"xMin", QString::fromStdString(r.axes.xMin)},
+                {"xMax", QString::fromStdString(r.axes.xMax)},
+                {"yMin", QString::fromStdString(r.axes.yMin)},
+                {"yMax", QString::fromStdString(r.axes.yMax)},
+            });
+        } else if (r.kind == lemma::Region::Kind::Text) {
             regions.append(QJsonObject{
                 {"type", "text"},
                 {"x", r.x},
@@ -93,6 +108,16 @@ bool load(lemma::Worksheet& worksheet, const QString& path, QString* error)
         } else if (type == "text") {
             worksheet.addTextRegion(r.value("x").toDouble(), r.value("y").toDouble(), r.value("width").toDouble(),
                                     r.value("text").toString().toStdString());
+        } else if (type == "plot") {
+            const int id = worksheet.addPlotRegion(r.value("x").toDouble(), r.value("y").toDouble(),
+                                                   r.value("width").toDouble(), r.value("height").toDouble(),
+                                                   r.value("traces").toString().toStdString());
+            lemma::PlotAxes& axes = worksheet.region(id)->axes;
+            axes.x = r.value("xVariable").toString().toStdString();
+            axes.xMin = r.value("xMin").toString().toStdString();
+            axes.xMax = r.value("xMax").toString().toStdString();
+            axes.yMin = r.value("yMin").toString().toStdString();
+            axes.yMax = r.value("yMax").toString().toStdString();
         }
     }
     worksheet.evaluate();

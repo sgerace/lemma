@@ -1,5 +1,6 @@
 #include "lemma/worksheet.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <initializer_list>
@@ -198,4 +199,119 @@ TEST_CASE("Text regions take no part in evaluation")
     CHECK(ws.region(note)->result.status == RegionResult::Status::Empty);
     CHECK(ws.region(note)->result.display.empty());
     CHECK(ws.regions().back().result.value == "2");
+}
+
+TEST_CASE("Plots sample a function across the x range")
+{
+    Worksheet ws;
+    ws.addRegion(0, 0, "f(x) := 2 x + 3");
+    const int plot = ws.addPlotRegion(0, 20, 288, 192, "f");
+    ws.evaluate();
+
+    const RegionResult& r = ws.region(plot)->result;
+    INFO(r.error);
+    REQUIRE(r.status == RegionResult::Status::Ok);
+    REQUIRE(r.plot.traces.size() == 1);
+    const auto& points = r.plot.traces[0].segments.at(0);
+    REQUIRE(points.size() == kPlotSamples);
+    CHECK(points.front().x == -10.0);
+    CHECK(points.front().y == -17.0);
+    CHECK(points.back().x == 10.0);
+    CHECK(points.back().y == 23.0);
+    // The y range is fitted to round numbers around the data.
+    CHECK(r.plot.yMin == -20.0);
+    CHECK(r.plot.yMax == 30.0);
+}
+
+TEST_CASE("Plot traces can be expressions, builtins, or several at once")
+{
+    Worksheet ws;
+    ws.addRegion(0, 0, "a := 2");
+    const int plot = ws.addPlotRegion(0, 20, 288, 192, "sin, a x^2, max(x, 1)");
+    ws.region(plot)->axes.xMin = "0";
+    ws.region(plot)->axes.xMax = "3";
+    ws.evaluate();
+
+    const RegionResult& r = ws.region(plot)->result;
+    INFO(r.error);
+    REQUIRE(r.status == RegionResult::Status::Ok);
+    REQUIRE(r.plot.traces.size() == 3);
+    CHECK(r.plot.traces[1].segments[0].back().y == 18.0);
+    CHECK(r.plot.traces[2].segments[0].front().y == 1.0);
+    CHECK(r.plot.traces[2].begin == 12); // "max(x, 1)", for coloring the source
+    CHECK(r.plot.traces[2].end == 21);
+}
+
+TEST_CASE("Plots break the curve where it can't be evaluated")
+{
+    Worksheet ws;
+    const int plot = ws.addPlotRegion(0, 0, 288, 192, "1/x");
+    ws.region(plot)->axes.yMin = "-5";
+    ws.region(plot)->axes.yMax = "5";
+    ws.evaluate();
+
+    const RegionResult& r = ws.region(plot)->result;
+    REQUIRE(r.status == RegionResult::Status::Ok);
+    CHECK(r.plot.traces[0].segments.size() == 2); // either side of x = 0
+    CHECK(r.plot.yMin == -5.0);
+    CHECK(r.plot.yMax == 5.0);
+}
+
+TEST_CASE("Plots carry units on both axes")
+{
+    Worksheet ws;
+    ws.addRegion(0, 0, "k := 3 N/m");
+    ws.addRegion(0, 20, "F(d) := k d");
+    const int plot = ws.addPlotRegion(0, 40, 288, 192, "F");
+    ws.region(plot)->axes.xMin = "0 m";
+    ws.region(plot)->axes.xMax = "200 mm";
+    ws.evaluate();
+
+    const RegionResult& r = ws.region(plot)->result;
+    INFO(r.error);
+    REQUIRE(r.status == RegionResult::Status::Ok);
+    CHECK(describeDimension(r.plot.xDim) == "m");
+    CHECK(describeDimension(r.plot.yDim) == "N");
+    CHECK(r.plot.xMax == 0.2);
+
+    ws.region(plot)->source = "F, x";
+    ws.evaluate();
+    CHECK(ws.region(plot)->result.error == "Units don't match: this trace is m, but the one before it is N");
+
+    ws.region(plot)->source = "F";
+    ws.region(plot)->axes.yMax = "5 kg";
+    ws.evaluate();
+    CHECK(ws.region(plot)->result.error == "y max: units don't match: the axis is N, but this is kg");
+}
+
+TEST_CASE("Plot errors point at the trace or name the field")
+{
+    const auto error = [](const std::string& traces, PlotAxes axes = {}) {
+        Worksheet ws;
+        const int plot = ws.addPlotRegion(0, 0, 288, 192, traces);
+        ws.region(plot)->axes = std::move(axes);
+        ws.evaluate();
+        return ws.region(plot)->result;
+    };
+    const RegionResult undefined = error("x, q");
+    CHECK(undefined.error == "q is not defined");
+    CHECK(undefined.errorBegin == 3);
+    CHECK(undefined.errorEnd == 4);
+
+    CHECK(error("x", {.x = "2"}).error == "x-axis variable: type a name, like x");
+    CHECK(error("x", {.xMin = "5", .xMax = "1"}).error == "x max must be greater than x min");
+    CHECK(error("x", {.xMin = "0 m", .xMax = "1 s"}).error == "x max: units don't match: the axis is m, but this is s");
+    CHECK(error("x", {.xMax = "q"}).error == "x max: q is not defined");
+
+    // An empty plot isn't an error; it just has nothing to draw yet.
+    CHECK(error("").status == RegionResult::Status::Ok);
+    CHECK(error("x,").status == RegionResult::Status::Ok);
+}
+
+TEST_CASE("Nice steps for ticks")
+{
+    CHECK(niceStep(10) == 2.0);
+    CHECK(niceStep(40) == 10.0);
+    CHECK(niceStep(0.3) == Catch::Approx(0.05));
+    CHECK(niceStep(0) == 1.0);
 }

@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QTextLayout>
@@ -24,6 +25,12 @@ const QColor kErrorColor(0xc6, 0x28, 0x28);
 const QColor kEditBoxColor(0x5b, 0x8d, 0xd9);
 const QColor kGuideColor(0xc8, 0xcc, 0xd2);
 const QColor kSelectionFill(0x5b, 0x8d, 0xd9, 0x30);
+const QColor kPlotFrameColor(0x60, 0x66, 0x70);
+const QColor kPlotGridColor(0xe8, 0xea, 0xee);
+const QColor kPlotAxisColor(0xb0, 0xb4, 0xba);
+const QColor kTraceColors[] = {{0x1f, 0x5f, 0xbf}, {0xc6, 0x28, 0x28}, {0x2e, 0x8b, 0x3a}, {0x8e, 0x44, 0xad}, {0xd9, 0x7a, 0x00}};
+
+constexpr double kPlotGap = 6.0; // between a plot's frame and its placeholders
 
 QString fromUtf8(const std::string& s)
 {
@@ -67,7 +74,8 @@ bool sameState(const std::optional<lemma::Region>& a, const std::optional<lemma:
     if (!a || !b) {
         return !a && !b;
     }
-    return a->kind == b->kind && a->x == b->x && a->y == b->y && a->width == b->width && a->source == b->source;
+    return a->kind == b->kind && a->x == b->x && a->y == b->y && a->width == b->width && a->height == b->height
+           && a->source == b->source && a->axes == b->axes;
 }
 
 } // namespace
@@ -77,13 +85,14 @@ bool sameState(const std::optional<lemma::Region>& a, const std::optional<lemma:
 class WorksheetCanvas::Change : public QUndoCommand {
 public:
     Change(WorksheetCanvas* canvas, const QString& text, EditKind kind, RegionStates before, RegionStates after,
-           int session, int caretBefore, int caretAfter)
+           int session, int field, int caretBefore, int caretAfter)
         : QUndoCommand(text)
         , canvas_(canvas)
         , kind_(kind)
         , before_(std::move(before))
         , after_(std::move(after))
         , session_(session)
+        , field_(field)
         , caretBefore_(caretBefore)
         , caretAfter_(caretAfter)
     {
@@ -91,7 +100,7 @@ public:
 
     int id() const override { return kind_ == EditKind::Other ? -1 : kEditMergeId; }
 
-    void undo() override { canvas_->restore(before_, editId(), caretBefore_); }
+    void undo() override { canvas_->restore(before_, editId(), caretBefore_, field_); }
 
     void redo() override
     {
@@ -100,14 +109,14 @@ public:
             pushed_ = false;
             return;
         }
-        canvas_->restore(after_, editId(), caretAfter_);
+        canvas_->restore(after_, editId(), caretAfter_, field_);
     }
 
     bool mergeWith(const QUndoCommand* other) override
     {
         // Typing and erasing are always about a single region.
         const auto* next = static_cast<const Change*>(other);
-        if (next->session_ != session_ || next->before_.front().id != before_.front().id) {
+        if (next->session_ != session_ || next->field_ != field_ || next->before_.front().id != before_.front().id) {
             return false;
         }
         // Removing a region emptied by erasing folds into the erase, so undo brings back its text.
@@ -130,6 +139,7 @@ private:
     RegionStates before_;
     RegionStates after_;
     int session_;
+    int field_; // the plot placeholder typed in
     int caretBefore_;
     int caretAfter_;
     bool pushed_ = true;
@@ -155,11 +165,12 @@ void WorksheetCanvas::record(const QString& text, RegionStates before, EditKind 
         changed = changed || !sameState(s.region, after.back().region);
     }
     if (changed) {
-        undoStack_.push(new Change(this, text, kind, std::move(before), std::move(after), editSession_, caretBefore, caret_));
+        undoStack_.push(new Change(this, text, kind, std::move(before), std::move(after), editSession_, editingField_,
+                                   caretBefore, caret_));
     }
 }
 
-void WorksheetCanvas::restore(const RegionStates& states, int editId, int caret)
+void WorksheetCanvas::restore(const RegionStates& states, int editId, int caret, int field)
 {
     // Drop any edit or drag as is. Ending an edit normally can push a command, which
     // mustn't happen from inside undo, and these states are already on the stack.
@@ -190,7 +201,7 @@ void WorksheetCanvas::restore(const RegionStates& states, int editId, int caret)
 
     // Show what changed: the caret for text, a selection for regions.
     if (editId && worksheet_.region(editId)) {
-        beginEditing(editId, caret);
+        beginEditing(editId, caret, field);
     } else {
         setSelection(present);
     }
@@ -311,6 +322,18 @@ QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
         }
         return QRectF(r.x, first.y(), width, last.y() + last.height() - first.y());
     }
+    if (r.kind == lemma::Region::Kind::Plot) {
+        QRectF rect = plotFrame(r);
+        for (int field = 0; field < PlotFieldCount; ++field) {
+            rect = rect.united(plotFieldRect(r, field));
+        }
+        if (r.result.status == lemma::RegionResult::Status::Error) {
+            const QFontMetricsF efm(errorFont_);
+            rect.setWidth(std::max(rect.width(), efm.horizontalAdvance(fromUtf8(r.result.error))));
+            rect.setBottom(rect.bottom() + efm.height() + 2);
+        }
+        return rect;
+    }
 
     const QFontMetricsF fm(font_);
     const double width = std::max(fm.horizontalAdvance(shownText(r) + hintText(r)), 4.0);
@@ -321,6 +344,88 @@ QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
         rect.setHeight(rect.height() + efm.height() + 2);
     }
     return rect;
+}
+
+std::string& WorksheetCanvas::fieldSource(lemma::Region& r, int field)
+{
+    if (r.kind != lemma::Region::Kind::Plot) {
+        return r.source;
+    }
+    switch (field) {
+    case XVariable: return r.axes.x;
+    case XMin: return r.axes.xMin;
+    case XMax: return r.axes.xMax;
+    case YMin: return r.axes.yMin;
+    case YMax: return r.axes.yMax;
+    default: return r.source;
+    }
+}
+
+const std::string& WorksheetCanvas::fieldSource(const lemma::Region& r, int field)
+{
+    return fieldSource(const_cast<lemma::Region&>(r), field);
+}
+
+QRectF WorksheetCanvas::plotFrame(const lemma::Region& r) const
+{
+    // The traces sit on the region's baseline, above the frame, like a title.
+    return QRectF(r.x, r.y + QFontMetricsF(font_).descent() + kPlotGap, r.width, r.height);
+}
+
+QString WorksheetCanvas::plotFieldText(const lemma::Region& r, int field, bool* fitted) const
+{
+    const QString text = fromUtf8(fieldSource(r, field));
+    const bool isFitted = (field == YMin || field == YMax) && text.trimmed().isEmpty()
+                          && !(r.id == editingId_ && field == editingField_)
+                          && r.result.status == lemma::RegionResult::Status::Ok;
+    if (fitted) {
+        *fitted = isFitted;
+    }
+    if (isFitted) {
+        const lemma::PlotData& plot = r.result.plot;
+        return fromUtf8(lemma::formatQuantity({field == YMin ? plot.yMin : plot.yMax, plot.yDim}, worksheet_.format));
+    }
+    return text;
+}
+
+QPointF WorksheetCanvas::plotFieldPosition(const lemma::Region& r, int field, int index) const
+{
+    const QFontMetricsF fm(font_);
+    const QRectF frame = plotFrame(r);
+    const QString text = plotFieldText(r, field);
+    // An empty placeholder still needs room to click and to show the caret.
+    const double width = text.isEmpty() ? fm.averageCharWidth() : fm.horizontalAdvance(text);
+    const double bottomBaseline = frame.bottom() + kPlotGap + fm.ascent();
+    QPointF start;
+    switch (field) {
+    case Traces: start = {r.x, r.y}; break;
+    case XVariable: start = {frame.center().x() - width / 2, bottomBaseline}; break;
+    case XMin: start = {frame.left(), bottomBaseline}; break;
+    case XMax: start = {frame.right() - width, bottomBaseline}; break;
+    case YMin: start = {frame.left() - kPlotGap - width, frame.bottom()}; break;
+    case YMax: start = {frame.left() - kPlotGap - width, frame.top() + fm.ascent()}; break;
+    default: break;
+    }
+    return start + QPointF(fm.horizontalAdvance(text.left(index)), 0);
+}
+
+QRectF WorksheetCanvas::plotFieldRect(const lemma::Region& r, int field) const
+{
+    const QFontMetricsF fm(font_);
+    const QString text = plotFieldText(r, field);
+    const QPointF start = plotFieldPosition(r, field, 0);
+    const double width = text.isEmpty() ? fm.averageCharWidth() : fm.horizontalAdvance(text);
+    return QRectF(start.x(), start.y() - fm.ascent(), width, fm.ascent() + fm.descent());
+}
+
+int WorksheetCanvas::plotFieldAt(const lemma::Region& r, QPointF docPos) const
+{
+    for (int field = 0; field < PlotFieldCount; ++field) {
+        if (plotFieldRect(r, field).adjusted(-3, -2, 3, 2).contains(docPos)) {
+            return field;
+        }
+    }
+    return -1;
 }
 
 int WorksheetCanvas::regionAt(QPointF docPos) const
@@ -339,6 +444,13 @@ int WorksheetCanvas::resizeHandleAt(QPointF docPos) const
 {
     const auto& regions = worksheet_.regions();
     for (auto it = regions.rbegin(); it != regions.rend(); ++it) {
+        if (it->kind == lemma::Region::Kind::Plot) {
+            const QPointF corner = plotFrame(*it).bottomRight();
+            if (std::abs(docPos.x() - corner.x()) <= 5 && std::abs(docPos.y() - corner.y()) <= 5) {
+                return it->id;
+            }
+            continue;
+        }
         if (it->kind != lemma::Region::Kind::Text) {
             continue;
         }
@@ -359,6 +471,9 @@ QPointF WorksheetCanvas::sourcePosition(const lemma::Region& r, int index) const
         const QTextLine line = layout.lineForTextPosition(index);
         return {line.cursorToX(index), line.y() + line.ascent()};
     }
+    if (r.kind == lemma::Region::Kind::Plot) {
+        return plotFieldPosition(r, Traces, index);
+    }
     return {r.x + QFontMetricsF(font_).horizontalAdvance(fromUtf8(r.source).left(index)), r.y};
 }
 
@@ -375,6 +490,18 @@ int WorksheetCanvas::caretIndexAt(const lemma::Region& r, QPointF docPos) const
             }
         }
         return line.xToCursor(docPos.x());
+    }
+    if (r.kind == lemma::Region::Kind::Plot) {
+        const int field = std::max(0, plotFieldAt(r, docPos));
+        const int length = static_cast<int>(fromUtf8(fieldSource(r, field)).size());
+        int best = 0;
+        for (int i = 1; i <= length; ++i) {
+            if (std::abs(docPos.x() - plotFieldPosition(r, field, i).x())
+                < std::abs(docPos.x() - plotFieldPosition(r, field, best).x())) {
+                best = i;
+            }
+        }
+        return best;
     }
 
     const double docX = docPos.x();
@@ -455,6 +582,10 @@ void WorksheetCanvas::paintRegions(QPainter& painter, bool onScreen) const
     for (const lemma::Region& r : worksheet_.regions()) {
         if (r.kind == lemma::Region::Kind::Text) {
             paintTextRegion(painter, r, onScreen);
+            continue;
+        }
+        if (r.kind == lemma::Region::Kind::Plot) {
+            paintPlotRegion(painter, r, onScreen);
             continue;
         }
         const bool isError = r.result.status == lemma::RegionResult::Status::Error;
@@ -540,6 +671,111 @@ void WorksheetCanvas::paintTextRegion(QPainter& painter, const lemma::Region& r,
             const double x = line.cursorToX(caret_);
             painter.setPen(QPen(kTextColor, 1.2));
             painter.drawLine(QPointF(x, line.y()), QPointF(x, line.y() + line.height()));
+        }
+    }
+}
+
+void WorksheetCanvas::paintPlotRegion(QPainter& painter, const lemma::Region& r, bool onScreen) const
+{
+    const QFontMetricsF fm(font_);
+    const QRectF frame = plotFrame(r);
+    const bool ok = r.result.status == lemma::RegionResult::Status::Ok;
+    const lemma::PlotData& plot = r.result.plot;
+    const auto toFrame = [&](double x, double y) {
+        return QPointF(frame.left() + (x - plot.xMin) / (plot.xMax - plot.xMin) * frame.width(),
+                       frame.bottom() - (y - plot.yMin) / (plot.yMax - plot.yMin) * frame.height());
+    };
+
+    painter.save();
+    painter.setClipRect(frame, Qt::IntersectClip);
+    painter.setBrush(Qt::NoBrush);
+    if (ok) {
+        // Light grid lines at round values, and darker axes through zero.
+        const double xStep = lemma::niceStep(plot.xMax - plot.xMin);
+        const double yStep = lemma::niceStep(plot.yMax - plot.yMin);
+        painter.setPen(QPen(kPlotGridColor, 1.0));
+        for (double x = std::ceil(plot.xMin / xStep) * xStep; x <= plot.xMax; x += xStep) {
+            painter.drawLine(toFrame(x, plot.yMin), toFrame(x, plot.yMax));
+        }
+        for (double y = std::ceil(plot.yMin / yStep) * yStep; y <= plot.yMax; y += yStep) {
+            painter.drawLine(toFrame(plot.xMin, y), toFrame(plot.xMax, y));
+        }
+        painter.setPen(QPen(kPlotAxisColor, 1.0));
+        if (plot.xMin < 0 && plot.xMax > 0) {
+            painter.drawLine(toFrame(0, plot.yMin), toFrame(0, plot.yMax));
+        }
+        if (plot.yMin < 0 && plot.yMax > 0) {
+            painter.drawLine(toFrame(plot.xMin, 0), toFrame(plot.xMax, 0));
+        }
+
+        for (std::size_t i = 0; i < plot.traces.size(); ++i) {
+            painter.setPen(QPen(kTraceColors[i % std::size(kTraceColors)], 1.5));
+            for (const auto& segment : plot.traces[i].segments) {
+                QPolygonF line;
+                for (const lemma::PlotPoint& p : segment) {
+                    line << toFrame(p.x, p.y);
+                }
+                painter.drawPolyline(line);
+            }
+        }
+    }
+    painter.restore();
+    painter.setPen(QPen(kPlotFrameColor, 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(frame);
+
+    // The placeholders. Each trace is written in the color it is drawn in.
+    painter.setFont(font_);
+    const bool editing = onScreen && r.id == editingId_;
+    for (int field = 0; field < PlotFieldCount; ++field) {
+        bool fitted = false;
+        const QString text = plotFieldText(r, field, &fitted);
+        const QPointF start = plotFieldPosition(r, field, 0);
+        if (text.isEmpty()) {
+            if (onScreen) { // an empty placeholder, Mathcad's small black box
+                painter.setPen(QPen(kTextColor, 1.0));
+                painter.drawRect(QRectF(start.x() + 1, start.y() - fm.ascent() * 0.7, fm.averageCharWidth() - 2,
+                                        fm.ascent() * 0.7));
+            }
+            continue;
+        }
+        painter.setPen(fitted ? kHintColor : kTextColor);
+        painter.drawText(start, text);
+        if (field == Traces && ok && !editing) {
+            const std::string& src = r.source;
+            for (std::size_t i = 0; i < plot.traces.size(); ++i) {
+                const int from = static_cast<int>(fromUtf8(src.substr(0, plot.traces[i].begin)).size());
+                const QString piece = fromUtf8(src.substr(plot.traces[i].begin, plot.traces[i].end - plot.traces[i].begin));
+                painter.setPen(kTraceColors[i % std::size(kTraceColors)]);
+                painter.drawText(plotFieldPosition(r, Traces, from), piece);
+            }
+        }
+    }
+
+    if (!ok) {
+        painter.setPen(kErrorColor);
+        painter.setFont(errorFont_);
+        const QFontMetricsF efm(errorFont_);
+        const double bottom = plotFieldRect(r, XMin).bottom();
+        painter.drawText(QPointF(r.x, bottom + 2 + efm.ascent()), fromUtf8(r.result.error));
+    }
+
+    if (onScreen && selection_.contains(r.id)) {
+        painter.setPen(QPen(kEditBoxColor, 1.0));
+        painter.setBrush(kSelectionFill);
+        painter.drawRect(regionRect(r).adjusted(-3, -2, 3, 2));
+    }
+    if (editing) {
+        painter.setPen(QPen(kEditBoxColor, 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(plotFieldRect(r, editingField_).adjusted(-3, -2, 3, 2));
+        // A grip on the frame's corner, which resizes the plot.
+        painter.setBrush(kEditBoxColor);
+        painter.drawRect(QRectF(frame.bottomRight() - QPointF(3, 3), QSizeF(6, 6)));
+        if (caretVisible_) {
+            const QPointF caret = plotFieldPosition(r, editingField_, caret_);
+            painter.setPen(QPen(kTextColor, 1.2));
+            painter.drawLine(caret - QPointF(0, fm.ascent()), caret + QPointF(0, fm.descent()));
         }
     }
 }
@@ -645,7 +881,7 @@ void WorksheetCanvas::moveSelection(QPointF delta)
 // ---------------------------------------------------------------------------
 // Editing
 
-void WorksheetCanvas::beginEditing(int id, int caret)
+void WorksheetCanvas::beginEditing(int id, int caret, int field)
 {
     if (editingId_ && editingId_ != id) {
         endEditing();
@@ -656,8 +892,9 @@ void WorksheetCanvas::beginEditing(int id, int caret)
     }
     setSelection({});
     editingId_ = id;
+    editingField_ = r->kind == lemma::Region::Kind::Plot ? field : Traces;
     ++editSession_;
-    moveCaret(std::clamp(caret, 0, static_cast<int>(fromUtf8(r->source).size())));
+    moveCaret(std::clamp(caret, 0, static_cast<int>(fromUtf8(fieldSource(*r, editingField_)).size())));
 }
 
 void WorksheetCanvas::endEditing()
@@ -666,7 +903,8 @@ void WorksheetCanvas::endEditing()
         return;
     }
     const lemma::Region* r = worksheet_.region(editingId_);
-    const bool empty = !r || fromUtf8(r->source).trimmed().isEmpty();
+    // An emptied plot stays, with its placeholders to fill in, as in Mathcad.
+    const bool empty = !r || (r->kind != lemma::Region::Kind::Plot && fromUtf8(r->source).trimmed().isEmpty());
     const bool fresh = editingId_ == freshId_;
     freshId_ = 0;
     RegionStates before;
@@ -704,9 +942,10 @@ void WorksheetCanvas::insertText(const QString& text, bool created)
     RegionStates before = created ? RegionStates{{editingId_, std::nullopt}} : capture({editingId_});
     const int caretBefore = caret_;
     lemma::Region* r = worksheet_.region(editingId_);
-    QString source = fromUtf8(r->source);
+    std::string& field = fieldSource(*r, editingField_);
+    QString source = fromUtf8(field);
     source.insert(caret_, text);
-    r->source = source.toStdString();
+    field = source.toStdString();
     moveCaret(caret_ + static_cast<int>(text.size()));
     contentChanged();
     record(tr("Typing"), std::move(before), EditKind::Typing, caretBefore);
@@ -715,7 +954,8 @@ void WorksheetCanvas::insertText(const QString& text, bool created)
 void WorksheetCanvas::eraseAtCaret(bool before)
 {
     lemma::Region* r = worksheet_.region(editingId_);
-    QString source = fromUtf8(r->source);
+    std::string& field = fieldSource(*r, editingField_);
+    QString source = fromUtf8(field);
     int from = before ? caret_ - 1 : caret_;
     if (from < 0 || from >= source.size()) {
         return;
@@ -731,7 +971,7 @@ void WorksheetCanvas::eraseAtCaret(bool before)
     RegionStates previous = capture({editingId_});
     const int caretBefore = caret_;
     source.remove(from, count);
-    r->source = source.toStdString();
+    field = source.toStdString();
     moveCaret(from);
     contentChanged();
     record(tr("Delete"), std::move(previous), EditKind::Erasing, caretBefore);
@@ -775,6 +1015,7 @@ void WorksheetCanvas::mousePressEvent(QMouseEvent* event)
         const lemma::Region* r = worksheet_.region(id);
         pressedId_ = id;
         pressRegionPos_ = {r->x, r->y};
+        pressField_ = r->kind == lemma::Region::Kind::Plot ? plotFieldAt(*r, pos) : Traces;
         dragging_ = false;
         return;
     }
@@ -791,10 +1032,15 @@ void WorksheetCanvas::updateCursor(QPointF viewportPos)
 {
     // An I-beam where a click edits text, an arrow on empty page space.
     const QPointF pos = toDocument(viewportPos);
-    if (resizeHandleAt(pos)) {
-        viewport()->setCursor(Qt::SizeHorCursor);
+    if (const int id = resizeHandleAt(pos)) {
+        const bool plot = worksheet_.region(id)->kind == lemma::Region::Kind::Plot;
+        viewport()->setCursor(plot ? Qt::SizeFDiagCursor : Qt::SizeHorCursor);
+    } else if (const int id = regionAt(pos)) {
+        const lemma::Region* r = worksheet_.region(id);
+        const bool text = r->kind != lemma::Region::Kind::Plot || plotFieldAt(*r, pos) >= 0;
+        viewport()->setCursor(text ? Qt::IBeamCursor : Qt::ArrowCursor);
     } else {
-        viewport()->setCursor(regionAt(pos) ? Qt::IBeamCursor : Qt::ArrowCursor);
+        viewport()->setCursor(Qt::ArrowCursor);
     }
 }
 
@@ -810,7 +1056,13 @@ void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
     if (resizingId_) {
         // The edge follows the mouse, snapped to the grid.
         lemma::Region* r = worksheet_.region(resizingId_);
-        r->width = std::max(kMinTextWidth, std::round((pos.x() - 3 - r->x) / kGrid) * kGrid);
+        if (r->kind == lemma::Region::Kind::Plot) {
+            const QRectF frame = plotFrame(*r);
+            r->width = std::max(kMinPlotWidth, std::round((pos.x() - frame.left()) / kGrid) * kGrid);
+            r->height = std::max(kMinPlotHeight, std::round((pos.y() - frame.top()) / kGrid) * kGrid);
+        } else {
+            r->width = std::max(kMinTextWidth, std::round((pos.x() - 3 - r->x) / kGrid) * kGrid);
+        }
         contentChanged();
         return;
     }
@@ -881,9 +1133,15 @@ void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
     }
     if (dragging_) {
         record(tr("Move"), std::move(dragBefore_));
+    } else if (pressField_ < 0) {
+        // A click on a plot's frame selects it, so it can be deleted or nudged.
+        endEditing();
+        if (worksheet_.region(pressedId_)) {
+            setSelection({pressedId_});
+        }
     } else {
         const lemma::Region* r = worksheet_.region(pressedId_);
-        beginEditing(pressedId_, caretIndexAt(*r, pressPos_));
+        beginEditing(pressedId_, caretIndexAt(*r, pressPos_), pressField_);
     }
     pressedId_ = 0;
     updateCursor(event->position());
@@ -898,8 +1156,16 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
     }
     if (editingId_) {
         const lemma::Region* r = worksheet_.region(editingId_);
-        const int length = static_cast<int>(fromUtf8(r->source).size());
+        const int length = static_cast<int>(fromUtf8(fieldSource(*r, editingField_)).size());
         const bool isText = r->kind == lemma::Region::Kind::Text;
+        if (r->kind == lemma::Region::Kind::Plot && (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab)) {
+            // Tab steps through the placeholders, as in Mathcad.
+            const bool back = event->key() == Qt::Key_Backtab || (event->modifiers() & Qt::ShiftModifier);
+            const int step = back ? PlotFieldCount - 1 : 1;
+            const int field = (editingField_ + step) % PlotFieldCount;
+            beginEditing(editingId_, static_cast<int>(fromUtf8(fieldSource(*r, field)).size()), field);
+            return;
+        }
         if (isText) {
             switch (event->key()) {
             case Qt::Key_Return:
@@ -998,6 +1264,14 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         contentChanged();
         return;
     }
+    if (!editingId_ && text == QStringLiteral("@")) {
+        // Mathcad's shortcut for an X-Y plot. Its traces start out empty, ready to type.
+        const int id = worksheet_.addPlotRegion(crosshair_.x(), crosshair_.y(), kPlotWidth, kPlotHeight);
+        contentChanged();
+        record(tr("Insert Plot"), {{id, std::nullopt}});
+        beginEditing(id, 0, Traces);
+        return;
+    }
     const lemma::Region* editing = worksheet_.region(editingId_);
     if (text == ":" && (!editing || editing->kind == lemma::Region::Kind::Math)) {
         text = ":="; // Mathcad's shortcut for definitions
@@ -1023,6 +1297,16 @@ void WorksheetCanvas::resizeEvent(QResizeEvent* event)
 {
     QAbstractScrollArea::resizeEvent(event);
     updateScrollBars();
+}
+
+bool WorksheetCanvas::focusNextPrevChild(bool next)
+{
+    // Tab moves between a plot's placeholders rather than to the next widget.
+    const lemma::Region* r = worksheet_.region(editingId_);
+    if (r && r->kind == lemma::Region::Kind::Plot) {
+        return false;
+    }
+    return QAbstractScrollArea::focusNextPrevChild(next);
 }
 
 void WorksheetCanvas::scrollContentsBy(int, int)

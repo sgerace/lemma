@@ -505,6 +505,175 @@ private slots:
         QCOMPARE(sheet().region(t)->width, 120.0);
     }
 
+    void atInsertsAPlotOfAFunction()
+    {
+        sheet().addRegion(72, 120, "f(x) := 2 x + 3");
+        canvas_->worksheetReset();
+
+        click({72, 216});
+        QTest::keyClicks(canvas_.get(), "@f");
+        const auto& regions = sheet().regions();
+        QCOMPARE(regions.size(), 2u);
+        const lemma::Region& plot = regions[1];
+        QCOMPARE(plot.kind, lemma::Region::Kind::Plot);
+        QCOMPARE(source(plot), QStringLiteral("f"));
+        QCOMPARE(plot.x, 72.0);
+        QCOMPARE(plot.y, 216.0);
+        QCOMPARE(plot.width, WorksheetCanvas::kPlotWidth);
+        QCOMPARE(plot.result.status, lemma::RegionResult::Status::Ok);
+        QCOMPARE(plot.result.plot.traces.size(), 1u);
+        QCOMPARE(plot.result.plot.traces[0].segments[0].back().y, 23.0); // f(10)
+
+        // Escape leaves the plot and puts the crosshair below it.
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QTest::keyClicks(canvas_.get(), "1");
+        QCOMPARE(sheet().regions().size(), 3u);
+        QVERIFY(sheet().regions()[2].y > canvas_->regionRect(*sheet().region(plot.id)).bottom());
+
+        // The plot follows the definitions above it.
+        const int plotId = plot.id;
+        click(regionPoint(sheet().regions()[0], 11)); // just after "f(x) := 2 x"
+        QTest::keyClicks(canvas_.get(), "^2");
+        QCOMPARE(sheet().region(plotId)->result.plot.traces[0].segments[0].back().y, 203.0);
+
+        // Inserting it and typing into it are separate steps.
+        undo()->undo();
+        undo()->undo();
+        undo()->undo();
+        QCOMPARE(source(*sheet().region(plotId)), QString());
+        undo()->undo();
+        QVERIFY(!sheet().region(plotId));
+    }
+
+    void tabStepsThroughPlotPlaceholders()
+    {
+        click({72, 120});
+        QTest::keyClicks(canvas_.get(), "@x^2");
+        const int id = sheet().regions()[0].id;
+
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab); // x-axis variable
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab); // x min, caret at the end
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClicks(canvas_.get(), "0");
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab); // x max
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        QTest::keyClicks(canvas_.get(), "4");
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab); // y min
+        QTest::keyClicks(canvas_.get(), "-1");
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab, Qt::ShiftModifier); // back to x max
+        QTest::keyClicks(canvas_.get(), "0");
+        QVERIFY(canvas_->hasFocus()); // Tab didn't move focus away from the canvas
+
+        const lemma::Region& r = *sheet().region(id);
+        QCOMPARE(QString::fromStdString(r.axes.xMin), QStringLiteral("0"));
+        QCOMPARE(QString::fromStdString(r.axes.xMax), QStringLiteral("40"));
+        QCOMPARE(QString::fromStdString(r.axes.yMin), QStringLiteral("-1"));
+        QCOMPARE(r.result.plot.xMax, 40.0);
+        QCOMPARE(r.result.plot.yMin, -1.0);
+        QCOMPARE(r.result.plot.yMax, 2000.0); // 1600, fitted up to a round number
+
+        // Undo puts the caret back in the placeholder that was typed in.
+        undo()->undo();
+        QCOMPARE(QString::fromStdString(sheet().region(id)->axes.xMax), QStringLiteral("4"));
+        QTest::keyClicks(canvas_.get(), "5");
+        QCOMPARE(QString::fromStdString(sheet().region(id)->axes.xMax), QStringLiteral("45"));
+    }
+
+    void clickingAPlotEditsAPlaceholderOrSelectsIt()
+    {
+        const int id = sheet().addPlotRegion(120, 120, 288, 192, "sin");
+        canvas_->worksheetReset();
+
+        // On a placeholder: edit it there.
+        const lemma::Region& r = *sheet().region(id);
+        click(canvas_->plotFieldPosition(r, WorksheetCanvas::XMax, 1) - QPointF(0, 4));
+        QTest::keyClicks(canvas_.get(), "0");
+        QCOMPARE(QString::fromStdString(sheet().region(id)->axes.xMax), QStringLiteral("100"));
+
+        // On the frame: select it, to delete or move.
+        const QPointF inside = canvas_->plotFrame(*sheet().region(id)).center();
+        QTest::mouseMove(canvas_->viewport(), canvas_->viewportPosition(inside).toPoint());
+        QCOMPARE(canvas_->viewport()->cursor().shape(), Qt::ArrowCursor);
+        click(inside);
+        QCOMPARE(canvas_->selection(), QSet<int>{id});
+        drag(inside, inside + QPointF(24, 48));
+        QCOMPARE(sheet().region(id)->x, 144.0);
+        QCOMPARE(sheet().region(id)->y, 168.0);
+        QTest::keyClick(canvas_.get(), Qt::Key_Delete);
+        QVERIFY(sheet().regions().empty());
+    }
+
+    void draggingAPlotCornerResizesIt()
+    {
+        const int id = sheet().addPlotRegion(120, 120, 288, 192, "x");
+        canvas_->worksheetReset();
+
+        const QPointF corner = canvas_->plotFrame(*sheet().region(id)).bottomRight();
+        QTest::mouseMove(canvas_->viewport(), canvas_->viewportPosition(corner).toPoint());
+        QCOMPARE(canvas_->viewport()->cursor().shape(), Qt::SizeFDiagCursor);
+        drag(corner, corner + QPointF(96, 48));
+        QCOMPARE(sheet().region(id)->width, 384.0);
+        QCOMPARE(sheet().region(id)->height, 240.0);
+        QCOMPARE(sheet().region(id)->x, 120.0);
+
+        // Never smaller than the minimum.
+        drag(corner + QPointF(96, 48), {0, 0});
+        QCOMPARE(sheet().region(id)->width, WorksheetCanvas::kMinPlotWidth);
+        QCOMPARE(sheet().region(id)->height, WorksheetCanvas::kMinPlotHeight);
+
+        undo()->undo();
+        undo()->undo();
+        QCOMPARE(sheet().region(id)->width, 288.0);
+        QCOMPARE(sheet().region(id)->height, 192.0);
+    }
+
+    void plotErrorsShowBelowIt()
+    {
+        const int id = sheet().addPlotRegion(120, 120, 288, 192, "q");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(id);
+        QCOMPARE(QString::fromStdString(r.result.error), QStringLiteral("q is not defined"));
+        const double bottomRow = canvas_->plotFieldPosition(r, WorksheetCanvas::XMin, 0).y();
+        QVERIFY(canvas_->regionRect(r).bottom() > bottomRow + 10);
+    }
+
+    void saveAndLoadPlots()
+    {
+        const int id = sheet().addPlotRegion(72, 96, 360, 216, "F, 2 F(d)");
+        lemma::PlotAxes& axes = sheet().region(id)->axes;
+        axes.x = "d";
+        axes.xMin = "0 m";
+        axes.xMax = "200 mm";
+        axes.yMax = "2 N";
+        sheet().addRegion(72, 60, "F(d) := 3 N/m d");
+        sheet().evaluate();
+
+        QTemporaryDir dir;
+        const QString path = dir.filePath("plot.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(root.value("version").toInt(), 3); // version 2 would silently drop plots
+
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        const lemma::Region& plot = loaded.regions()[0];
+        QCOMPARE(plot.kind, lemma::Region::Kind::Plot);
+        QCOMPARE(source(plot), QStringLiteral("F, 2 F(d)"));
+        QCOMPARE(plot.width, 360.0);
+        QCOMPARE(plot.height, 216.0);
+        QVERIFY(plot.axes == sheet().region(id)->axes);
+        QCOMPARE(plot.result.status, lemma::RegionResult::Status::Ok);
+        QCOMPARE(plot.result.plot.traces.size(), 2u);
+        QCOMPARE(plot.result.plot.yMax, 2.0);
+    }
+
     void saveAndLoadTextRegions()
     {
         sheet().addTextRegion(72, 96, 300, "Cantilever check\nAssumes a uniform load.");
@@ -519,7 +688,7 @@ private slots:
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-        QCOMPARE(root.value("version").toInt(), 2); // version 1 would silently drop text regions
+        QVERIFY(root.value("version").toInt() >= 2); // version 1 would silently drop text regions
         QCOMPARE(root.value("regions").toArray()[0].toObject().value("type").toString(), QStringLiteral("text"));
 
         lemma::Worksheet loaded;
@@ -598,6 +767,7 @@ private slots:
         sheet().addRegion(72, 96, "L := 2.5 m");
         sheet().addRegion(72, 1200, "L = ft"); // on page 2
         sheet().addTextRegion(72, 2200, 300, "A note\non page 3");
+        sheet().addPlotRegion(72, 240, 288, 192, "x^2");
         canvas_->worksheetReset();
         QCOMPARE(canvas_->pageCount(), 3);
 
@@ -633,6 +803,11 @@ private slots:
         QTest::keyClicks(canvas_.get(), "w L^4 / (8 E I) = mm");
         QTest::keyClick(canvas_.get(), Qt::Key_Return);
         QTest::keyClicks(canvas_.get(), "w L + 1 kg =");
+        click({72, 624});
+        QTest::keyClicks(canvas_.get(), "f(x): x^2 / 20 - 2");
+        click({120, 696});
+        QTest::keyClicks(canvas_.get(), "@f, sin");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         shiftClick(regionPoint(sheet().regions()[1], 1)); // selection shows on screen, not in the PDF
 
         QVERIFY(canvas_->grab().save(dir + "/canvas.png"));

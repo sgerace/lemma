@@ -46,4 +46,7 @@ enum class Lookup {
 // Evaluates an expression. Throws lemma::Error for undefined names, unit mismatches, etc.
 Quantity evaluate(const Node& node, const Environment& env, Lookup lookup = Lookup::VariablesFirst);
 
+// True for functions every worksheet has, like sqrt and sin.
+bool isBuiltinFunction(std::string_view name);
+
 } // namespace lemma

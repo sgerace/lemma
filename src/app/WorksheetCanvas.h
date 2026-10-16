@@ -15,9 +15,11 @@
 class QPainter;
 class QTextLayout;
 
-// The page view: math and text regions placed freely on US Letter pages, Mathcad style.
-// Click anywhere to move the red crosshair, then type to start a math region there, or
-// type '"' to start a text region. Text wraps at a width set by dragging its right edge.
+// The page view: math, text and plot regions placed freely on US Letter pages, Mathcad style.
+// Click anywhere to move the red crosshair, then type to start a math region there, type
+// '"' to start a text region, or '@' to insert an X-Y plot. Text wraps at a width set by
+// dragging its right edge; a plot is resized by its bottom-right corner, and Tab moves
+// between its placeholders.
 // Drag on empty space or Shift+click to select regions, then drag, nudge or delete them.
 // Every edit goes through undoStack(), which is clean while the worksheet is unmodified.
 //
@@ -31,6 +33,13 @@ public:
     static constexpr double kMargin = 72.0;       // 0.75 in
     static constexpr double kGrid = 12.0;         // 1/8 in
     static constexpr double kMinTextWidth = 48.0;
+    static constexpr double kPlotWidth = 288.0; // 3 in × 2 in, as inserted
+    static constexpr double kPlotHeight = 192.0;
+    static constexpr double kMinPlotWidth = 96.0;
+    static constexpr double kMinPlotHeight = 72.0;
+
+    // A plot's placeholders. The traces are the region's source.
+    enum PlotField { Traces, XVariable, XMin, XMax, YMin, YMax, PlotFieldCount };
 
     explicit WorksheetCanvas(QWidget* parent = nullptr);
 
@@ -48,6 +57,10 @@ public:
     // The region's outline, as hit-tested and selected. A text region being edited spans
     // its whole wrap width; otherwise it is as wide as its longest line.
     QRectF regionRect(const lemma::Region& r) const;
+    // Where a plot draws its curves.
+    QRectF plotFrame(const lemma::Region& r) const;
+    // The point on a plot field's baseline just before character `index` of its text.
+    QPointF plotFieldPosition(const lemma::Region& r, int field, int index) const;
 
     // Regions picked by rubber band, Shift+click or Ctrl+A. Never includes the one being edited.
     const QSet<int>& selection() const { return selection_; }
@@ -66,6 +79,7 @@ protected:
     void focusOutEvent(QFocusEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void scrollContentsBy(int dx, int dy) override;
+    bool focusNextPrevChild(bool next) override;
 
 private:
     class Change;
@@ -85,7 +99,7 @@ private:
     // anything changed. The change has already been made.
     void record(const QString& text, RegionStates before, EditKind kind = EditKind::Other, int caretBefore = 0);
     // Puts regions back as they were, for undo and redo.
-    void restore(const RegionStates& states, int editId, int caret);
+    void restore(const RegionStates& states, int editId, int caret, int field);
 
     QPointF pageOrigin() const;
     QPointF toDocument(QPointF viewportPos) const;
@@ -96,8 +110,18 @@ private:
     QString hintText(const lemma::Region& r) const;
     // Lays out a text region in document coordinates, wrapped at its width.
     void layoutText(QTextLayout& layout, const lemma::Region& r) const;
+
+    // The text a field of a region holds: a plot's placeholder, or any region's source.
+    static std::string& fieldSource(lemma::Region& r, int field);
+    static const std::string& fieldSource(const lemma::Region& r, int field);
+    // What a plot field shows: its text, or the fitted limit (`fitted` is set) for an empty y limit.
+    QString plotFieldText(const lemma::Region& r, int field, bool* fitted = nullptr) const;
+    QRectF plotFieldRect(const lemma::Region& r, int field) const;
+    int plotFieldAt(const lemma::Region& r, QPointF docPos) const;
+
     int regionAt(QPointF docPos) const;
-    // The text region whose right edge (the wrap width handle) is at docPos.
+    // The text region whose right edge (the wrap width handle) is at docPos, or the plot
+    // whose bottom-right corner is.
     int resizeHandleAt(QPointF docPos) const;
     int caretIndexAt(const lemma::Region& r, QPointF docPos) const;
     // Where Up, Down, Home or End moves the caret in a text region: by lines, not the whole region.
@@ -106,6 +130,7 @@ private:
 
     void paintRegions(QPainter& painter, bool onScreen) const;
     void paintTextRegion(QPainter& painter, const lemma::Region& r, bool onScreen) const;
+    void paintPlotRegion(QPainter& painter, const lemma::Region& r, bool onScreen) const;
 
     void setSelection(const QSet<int>& ids);
     void deleteSelection();
@@ -113,7 +138,7 @@ private:
     // top and left edges, so its layout is kept.
     void moveSelection(QPointF delta);
 
-    void beginEditing(int id, int caret);
+    void beginEditing(int id, int caret, int field = Traces);
     void endEditing();
     void insertText(const QString& text, bool created = false);
     void eraseAtCaret(bool before);
@@ -129,7 +154,8 @@ private:
     QPointF crosshair_{kMargin, kMargin + kGrid * 2};
 
     int editingId_ = 0;
-    int caret_ = 0; // UTF-16 index into the region's source
+    int editingField_ = Traces; // which of a plot's placeholders; always Traces for other regions
+    int caret_ = 0; // UTF-16 index into the field's text
     bool caretVisible_ = true;
     QTimer caretBlink_;
     int editSession_ = 0; // bumped on each beginEditing, so separate edits don't merge
@@ -142,10 +168,11 @@ private:
     int pressedId_ = 0;
     QPointF pressPos_;
     QPointF pressRegionPos_;
+    int pressField_ = -1; // the plot placeholder pressed, if any
     bool dragging_ = false;
     RegionStates dragBefore_;
 
-    // Dragging a text region's right edge to change its wrap width.
+    // Dragging a text region's right edge to change its wrap width, or a plot's corner.
     int resizingId_ = 0;
     RegionStates resizeBefore_;
 

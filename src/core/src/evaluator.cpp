@@ -277,4 +277,9 @@ Quantity evaluate(const Node& node, const Environment& env, Lookup lookup)
     return Evaluator(env, lookup).eval(node);
 }
 
+bool isBuiltinFunction(std::string_view name)
+{
+    return builtins().contains(std::string(name));
+}
+
 } // namespace lemma

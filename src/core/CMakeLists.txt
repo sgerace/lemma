@@ -13,6 +13,7 @@ add_library(lemma_core STATIC
     src/evaluator.cpp
     src/format.cpp
     src/parser.cpp
+    src/plot.cpp
     src/units.cpp
     src/worksheet.cpp
 )
