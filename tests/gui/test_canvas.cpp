@@ -7,6 +7,7 @@
 #include "WorksheetCanvas.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QScrollBar>
@@ -388,6 +389,167 @@ private slots:
         QCOMPARE(viewport->cursor().shape(), Qt::IBeamCursor);
     }
 
+    void quoteStartsATextRegionThatIsntEvaluated()
+    {
+        click({72, 120});
+        QTest::keyClicks(canvas_.get(), "\"x: 5");
+        QTest::keyClick(canvas_.get(), Qt::Key_Return); // a new line, not the end of the region
+        QTest::keyClicks(canvas_.get(), "then x = 5");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QTest::keyClicks(canvas_.get(), "x =");
+
+        const auto& regions = sheet().regions();
+        QCOMPARE(regions.size(), 2u);
+        QCOMPARE(regions[0].kind, lemma::Region::Kind::Text);
+        QCOMPARE(source(regions[0]), QStringLiteral("x: 5\nthen x = 5")); // ':' stays as typed in text
+        QCOMPARE(regions[0].x, 72.0);
+        QCOMPARE(regions[0].y, 120.0);
+        QCOMPARE(regions[0].width, WorksheetCanvas::kPageWidth - 2 * WorksheetCanvas::kMargin);
+        QCOMPARE(regions[0].result.status, lemma::RegionResult::Status::Empty);
+
+        // Escape put the crosshair below both lines, and the math there doesn't see the text.
+        QCOMPARE(regions[1].kind, lemma::Region::Kind::Math);
+        QVERIFY(regions[1].y > canvas_->regionRect(regions[0]).bottom());
+        QCOMPARE(QString::fromStdString(regions[1].result.error), QStringLiteral("x is not defined"));
+
+        // The text region and everything typed into it is one undo step.
+        undo()->undo();
+        undo()->undo();
+        QVERIFY(sheet().regions().empty());
+    }
+
+    void emptyTextRegionLeavesNoTrace()
+    {
+        click({72, 120});
+        QTest::keyClick(canvas_.get(), Qt::Key_QuoteDbl, Qt::ShiftModifier);
+        QCOMPARE(sheet().regions().size(), 1u);
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QVERIFY(sheet().regions().empty());
+        QCOMPARE(undo()->count(), 0);
+
+        // Undo while it is still empty takes it away too, rather than leaving it behind.
+        sheet().addRegion(72, 240, "a := 1");
+        canvas_->worksheetReset();
+        click(regionPoint(sheet().regions()[0], 6));
+        QTest::keyClicks(canvas_.get(), "0");
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "\"");
+        undo()->undo();
+        QCOMPARE(sheet().regions().size(), 1u);
+        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("a := 1"));
+    }
+
+    void textWrapsAndCaretMovesByLine()
+    {
+        const int t = sheet().addTextRegion(72, 120, 120, "one two three four five six\nseven");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(t);
+        // "six" has wrapped below the first line, and "seven" starts a line of its own.
+        QVERIFY(canvas_->sourcePosition(r, 24).y() > canvas_->sourcePosition(r, 0).y());
+        QVERIFY(canvas_->sourcePosition(r, 28).y() > canvas_->sourcePosition(r, 24).y());
+        QCOMPARE(canvas_->sourcePosition(r, 28).x(), 72.0);
+        QVERIFY(canvas_->regionRect(r).height() > canvas_->sourcePosition(r, 28).y() - canvas_->sourcePosition(r, 0).y());
+        QVERIFY(canvas_->regionRect(r).width() <= 120);
+
+        // Click at the start of "seven", on the last line.
+        click(regionPoint(r, 28));
+        QTest::keyClicks(canvas_.get(), "_");
+        QCOMPARE(source(*sheet().region(t)), QStringLiteral("one two three four five six\n_seven"));
+
+        QTest::keyClick(canvas_.get(), Qt::Key_End);
+        QTest::keyClicks(canvas_.get(), "!");
+        QCOMPARE(source(*sheet().region(t)), QStringLiteral("one two three four five six\n_seven!"));
+
+        // Up goes to the line above (the end of the wrapped text), not to the start of the region.
+        QTest::keyClick(canvas_.get(), Qt::Key_Up);
+        QTest::keyClick(canvas_.get(), Qt::Key_End);
+        QTest::keyClicks(canvas_.get(), "?");
+        QCOMPARE(source(*sheet().region(t)), QStringLiteral("one two three four five six?\n_seven!"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Home);
+        QTest::keyClick(canvas_.get(), Qt::Key_Down);
+        QTest::keyClick(canvas_.get(), Qt::Key_Down);
+        QTest::keyClick(canvas_.get(), Qt::Key_Home);
+        QTest::keyClicks(canvas_.get(), "#");
+        QCOMPARE(source(*sheet().region(t)), QStringLiteral("one two three four five six?\n#_seven!"));
+    }
+
+    void draggingTheRightEdgeSetsTheWrapWidth()
+    {
+        const int t = sheet().addTextRegion(72, 120, 120, "one two three four five six");
+        canvas_->worksheetReset();
+        const QRectF before = canvas_->regionRect(*sheet().region(t));
+
+        const QPointF edge(before.right() + 3, before.center().y());
+        QTest::mouseMove(canvas_->viewport(), canvas_->viewportPosition(edge).toPoint());
+        QCOMPARE(canvas_->viewport()->cursor().shape(), Qt::SizeHorCursor);
+        drag(edge, {72 + 600 + 3, before.center().y()});
+
+        const lemma::Region& r = *sheet().region(t);
+        QCOMPARE(r.width, 600.0);
+        QCOMPARE(r.x, 72.0); // resized, not moved
+        QVERIFY(canvas_->regionRect(r).height() < before.height()); // now on one line
+        QCOMPARE(source(r), QStringLiteral("one two three four five six"));
+
+        // Never narrower than the minimum.
+        drag({canvas_->regionRect(r).right() + 3, before.center().y()}, {0, before.center().y()});
+        QCOMPARE(sheet().region(t)->width, WorksheetCanvas::kMinTextWidth);
+
+        undo()->undo();
+        QCOMPARE(sheet().region(t)->width, 600.0);
+        undo()->undo();
+        QCOMPARE(sheet().region(t)->width, 120.0);
+
+        // Dragging inside the region moves it, like a math region.
+        drag(regionPoint(*sheet().region(t), 2), regionPoint(*sheet().region(t), 2) + QPointF(0, 120));
+        QCOMPARE(sheet().region(t)->y, 240.0);
+        QCOMPARE(sheet().region(t)->width, 120.0);
+    }
+
+    void saveAndLoadTextRegions()
+    {
+        sheet().addTextRegion(72, 96, 300, "Cantilever check\nAssumes a uniform load.");
+        sheet().addRegion(72, 168, "w := 2 kN/m");
+        sheet().evaluate();
+
+        QTemporaryDir dir;
+        const QString path = dir.filePath("text.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(root.value("version").toInt(), 2); // version 1 would silently drop text regions
+        QCOMPARE(root.value("regions").toArray()[0].toObject().value("type").toString(), QStringLiteral("text"));
+
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        QCOMPARE(loaded.regions().size(), 2u);
+        const lemma::Region& text = loaded.regions()[0];
+        QCOMPARE(text.kind, lemma::Region::Kind::Text);
+        QCOMPARE(source(text), QStringLiteral("Cantilever check\nAssumes a uniform load."));
+        QCOMPARE(text.x, 72.0);
+        QCOMPARE(text.y, 96.0);
+        QCOMPARE(text.width, 300.0);
+        QCOMPARE(loaded.regions()[1].kind, lemma::Region::Kind::Math);
+    }
+
+    void loadsVersion1Files()
+    {
+        QTemporaryDir dir;
+        QFile f(dir.filePath("v1.lemma"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(R"({"format": "lemma-worksheet", "version": 1,
+                    "regions": [{"type": "math", "x": 72, "y": 96, "source": "2 m + 1 m ="}]})");
+        f.close();
+
+        lemma::Worksheet ws;
+        QString error;
+        QVERIFY2(DocumentIO::load(ws, f.fileName(), &error), qPrintable(error));
+        QCOMPARE(ws.regions().size(), 1u);
+        QCOMPARE(value(ws.regions()[0]), QStringLiteral("3 m"));
+    }
+
     void saveAndLoadRoundTrip()
     {
         sheet().addRegion(72, 96, "L := 2.5 m");
@@ -435,8 +597,9 @@ private slots:
     {
         sheet().addRegion(72, 96, "L := 2.5 m");
         sheet().addRegion(72, 1200, "L = ft"); // on page 2
+        sheet().addTextRegion(72, 2200, 300, "A note\non page 3");
         canvas_->worksheetReset();
-        QCOMPARE(canvas_->pageCount(), 2);
+        QCOMPARE(canvas_->pageCount(), 3);
 
         QTemporaryDir dir;
         const QString path = dir.filePath("out.pdf");
@@ -446,7 +609,7 @@ private slots:
         QVERIFY(pdf.open(QIODevice::ReadOnly));
         const QByteArray bytes = pdf.readAll();
         QVERIFY(bytes.startsWith("%PDF"));
-        QCOMPARE(bytes.count("/Type /Page\n") + bytes.count("/Type /Page\r") + bytes.count("/Type /Page "), 2);
+        QCOMPARE(bytes.count("/Type /Page\n") + bytes.count("/Type /Page\r") + bytes.count("/Type /Page "), 3);
     }
 
     void snapshot()
@@ -461,6 +624,9 @@ private slots:
                  qPrintable(error));
         canvas_->worksheetReset();
 
+        click({480, 192}); // beside the math, so it wraps at the right margin
+        QTest::keyClicks(canvas_.get(), "\"Deflection under a uniform load, from the beam tables. "
+                                        "Check it against L/240.");
         click({72, 480});
         QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
         QTest::keyClick(canvas_.get(), Qt::Key_Return);

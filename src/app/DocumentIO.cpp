@@ -11,7 +11,8 @@
 namespace {
 
 constexpr auto kFormat = "lemma-worksheet";
-constexpr int kVersion = 1;
+// 2: text regions. Version 1 readers would silently drop them, so they must refuse the file.
+constexpr int kVersion = 2;
 
 } // namespace
 
@@ -21,12 +22,22 @@ bool save(const lemma::Worksheet& worksheet, const QString& path, QString* error
 {
     QJsonArray regions;
     for (const lemma::Region& r : worksheet.regions()) {
-        regions.append(QJsonObject{
-            {"type", "math"},
-            {"x", r.x},
-            {"y", r.y},
-            {"source", QString::fromStdString(r.source)},
-        });
+        if (r.kind == lemma::Region::Kind::Text) {
+            regions.append(QJsonObject{
+                {"type", "text"},
+                {"x", r.x},
+                {"y", r.y},
+                {"width", r.width},
+                {"text", QString::fromStdString(r.source)},
+            });
+        } else {
+            regions.append(QJsonObject{
+                {"type", "math"},
+                {"x", r.x},
+                {"y", r.y},
+                {"source", QString::fromStdString(r.source)},
+            });
+        }
     }
     const QJsonObject root{
         {"format", kFormat},
@@ -75,9 +86,13 @@ bool load(lemma::Worksheet& worksheet, const QString& path, QString* error)
     worksheet.clear();
     for (const QJsonValue& value : root.value("regions").toArray()) {
         const QJsonObject r = value.toObject();
-        if (r.value("type").toString() == "math") {
+        const QString type = r.value("type").toString();
+        if (type == "math") {
             worksheet.addRegion(r.value("x").toDouble(), r.value("y").toDouble(),
                                 r.value("source").toString().toStdString());
+        } else if (type == "text") {
+            worksheet.addTextRegion(r.value("x").toDouble(), r.value("y").toDouble(), r.value("width").toDouble(),
+                                    r.value("text").toString().toStdString());
         }
     }
     worksheet.evaluate();

@@ -23,6 +23,9 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
 - **Mathcad evaluation order:** the worksheet calculates top to bottom, then left to
   right, so a name can only be used below where it's defined. Drag a region to move it.
 - **Live results:** results update as you type.
+- **Text regions:** type `"` at the crosshair for a heading or note. Enter starts a new
+  line, Escape finishes, and dragging the right edge sets where the text wraps. Text is
+  never evaluated.
 - **Portable files:** `.lemma` files are versioned JSON, so they're human-readable and
   diff well in version control.
 - **PDF export** of the page layout, US Letter.

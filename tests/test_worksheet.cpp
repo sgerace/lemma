@@ -186,3 +186,16 @@ TEST_CASE("Division by zero")
 {
     CHECK(lastError({"1 / (2 - 2) ="}) == "Division by zero");
 }
+
+TEST_CASE("Text regions take no part in evaluation")
+{
+    Worksheet ws;
+    ws.addRegion(0, 0, "x := 2");
+    const int note = ws.addTextRegion(0, 20, 300, "x := 5\nso x = 5, surely");
+    ws.addRegion(0, 40, "x =");
+    ws.evaluate();
+
+    CHECK(ws.region(note)->result.status == RegionResult::Status::Empty);
+    CHECK(ws.region(note)->result.display.empty());
+    CHECK(ws.regions().back().result.value == "2");
+}

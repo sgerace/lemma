@@ -92,6 +92,15 @@ int Worksheet::addRegion(double x, double y, std::string source)
     return regions_.back().id;
 }
 
+int Worksheet::addTextRegion(double x, double y, double width, std::string text)
+{
+    const int id = addRegion(x, y, std::move(text));
+    Region& r = regions_.back();
+    r.kind = Region::Kind::Text;
+    r.width = width;
+    return id;
+}
+
 void Worksheet::removeRegion(int id)
 {
     std::erase_if(regions_, [id](const Region& r) { return r.id == id; });
@@ -127,7 +136,11 @@ void Worksheet::evaluate()
     std::vector<Region*> order;
     order.reserve(regions_.size());
     for (Region& r : regions_) {
-        order.push_back(&r);
+        if (r.kind == Region::Kind::Math) {
+            order.push_back(&r);
+        } else {
+            r.result = {};
+        }
     }
     std::stable_sort(order.begin(), order.end(), [](const Region* a, const Region* b) {
         return a->y != b->y ? a->y < b->y : a->x < b->x;

@@ -13,9 +13,11 @@
 #include <vector>
 
 class QPainter;
+class QTextLayout;
 
-// The page view: math regions placed freely on US Letter pages, Mathcad style.
-// Click anywhere to move the red crosshair, then type to start a region there.
+// The page view: math and text regions placed freely on US Letter pages, Mathcad style.
+// Click anywhere to move the red crosshair, then type to start a math region there, or
+// type '"' to start a text region. Text wraps at a width set by dragging its right edge.
 // Drag on empty space or Shift+click to select regions, then drag, nudge or delete them.
 // Every edit goes through undoStack(), which is clean while the worksheet is unmodified.
 //
@@ -28,6 +30,7 @@ public:
     static constexpr double kPageHeight = 1056.0; // 11 in
     static constexpr double kMargin = 72.0;       // 0.75 in
     static constexpr double kGrid = 12.0;         // 1/8 in
+    static constexpr double kMinTextWidth = 48.0;
 
     explicit WorksheetCanvas(QWidget* parent = nullptr);
 
@@ -42,6 +45,9 @@ public:
 
     // The point on a region's baseline just before character `index` (UTF-16) of its source.
     QPointF sourcePosition(const lemma::Region& r, int index) const;
+    // The region's outline, as hit-tested and selected. A text region being edited spans
+    // its whole wrap width; otherwise it is as wide as its longest line.
+    QRectF regionRect(const lemma::Region& r) const;
 
     // Regions picked by rubber band, Shift+click or Ctrl+A. Never includes the one being edited.
     const QSet<int>& selection() const { return selection_; }
@@ -88,12 +94,18 @@ private:
     // What a region shows: its source while being edited, its result otherwise.
     QString shownText(const lemma::Region& r) const;
     QString hintText(const lemma::Region& r) const;
-    QRectF regionRect(const lemma::Region& r) const;
+    // Lays out a text region in document coordinates, wrapped at its width.
+    void layoutText(QTextLayout& layout, const lemma::Region& r) const;
     int regionAt(QPointF docPos) const;
-    int caretIndexAt(const lemma::Region& r, double docX) const;
+    // The text region whose right edge (the wrap width handle) is at docPos.
+    int resizeHandleAt(QPointF docPos) const;
+    int caretIndexAt(const lemma::Region& r, QPointF docPos) const;
+    // Where Up, Down, Home or End moves the caret in a text region: by lines, not the whole region.
+    int textCaretFor(const lemma::Region& r, int key) const;
     void updateCursor(QPointF viewportPos);
 
     void paintRegions(QPainter& painter, bool onScreen) const;
+    void paintTextRegion(QPainter& painter, const lemma::Region& r, bool onScreen) const;
 
     void setSelection(const QSet<int>& ids);
     void deleteSelection();
@@ -112,6 +124,7 @@ private:
     lemma::Worksheet worksheet_;
     QFont font_;
     QFont errorFont_;
+    QFont textFont_;
 
     QPointF crosshair_{kMargin, kMargin + kGrid * 2};
 
@@ -120,6 +133,9 @@ private:
     bool caretVisible_ = true;
     QTimer caretBlink_;
     int editSession_ = 0; // bumped on each beginEditing, so separate edits don't merge
+    // A text region started with '"' and still empty. It isn't on the undo stack until its
+    // first character, so it goes away without a trace if left empty.
+    int freshId_ = 0;
 
     QSet<int> selection_;
 
@@ -128,6 +144,10 @@ private:
     QPointF pressRegionPos_;
     bool dragging_ = false;
     RegionStates dragBefore_;
+
+    // Dragging a text region's right edge to change its wrap width.
+    int resizingId_ = 0;
+    RegionStates resizeBefore_;
 
     // Rubber-band selection, from a press on empty page space.
     bool bandPressed_ = false;

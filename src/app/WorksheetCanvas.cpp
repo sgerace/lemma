@@ -8,6 +8,7 @@
 #include <QPainterPath>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QTextLayout>
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,7 @@ bool sameState(const std::optional<lemma::Region>& a, const std::optional<lemma:
     if (!a || !b) {
         return !a && !b;
     }
-    return a->x == b->x && a->y == b->y && a->source == b->source;
+    return a->kind == b->kind && a->x == b->x && a->y == b->y && a->width == b->width && a->source == b->source;
 }
 
 } // namespace
@@ -162,9 +163,13 @@ void WorksheetCanvas::restore(const RegionStates& states, int editId, int caret)
 {
     // Drop any edit or drag as is. Ending an edit normally can push a command, which
     // mustn't happen from inside undo, and these states are already on the stack.
+    if (freshId_) {
+        worksheet_.removeRegion(freshId_); // never recorded, so nothing would bring it back or take it away
+        freshId_ = 0;
+    }
     editingId_ = 0;
     caretBlink_.stop();
-    pressedId_ = 0;
+    pressedId_ = resizingId_ = 0;
     dragging_ = bandPressed_ = banding_ = false;
     updateCursor(viewport()->mapFromGlobal(QCursor::pos()));
 
@@ -199,6 +204,8 @@ WorksheetCanvas::WorksheetCanvas(QWidget* parent)
     errorFont_ = font_;
     errorFont_.setPointSizeF(9);
     errorFont_.setItalic(true);
+    textFont_.setFamilies({"Segoe UI", "Helvetica Neue", "Arial"});
+    textFont_.setPointSizeF(11);
 
     viewport()->setMouseTracking(true); // to pick the cursor on hover
     setFocusPolicy(Qt::StrongFocus);
@@ -217,9 +224,9 @@ WorksheetCanvas::WorksheetCanvas(QWidget* parent)
 
 void WorksheetCanvas::worksheetReset()
 {
-    editingId_ = 0;
+    editingId_ = freshId_ = 0;
     caretBlink_.stop();
-    pressedId_ = 0;
+    pressedId_ = resizingId_ = 0;
     bandPressed_ = banding_ = false;
     selection_.clear();
     undoStack_.clear();
@@ -267,8 +274,44 @@ QString WorksheetCanvas::hintText(const lemma::Region& r) const
     return {};
 }
 
+void WorksheetCanvas::layoutText(QTextLayout& layout, const lemma::Region& r) const
+{
+    QString text = fromUtf8(r.source);
+    text.replace(QLatin1Char('\n'), QChar::LineSeparator); // same length, so caret indices still match
+    layout.setText(text);
+    layout.setFont(textFont_);
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    layout.setTextOption(option);
+
+    // The region's (x, y) is the first line's baseline, as for math.
+    layout.beginLayout();
+    double top = 0.0;
+    for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine()) {
+        line.setLineWidth(r.width);
+        if (line.lineNumber() == 0) {
+            top = r.y - line.ascent();
+        }
+        line.setPosition({r.x, top});
+        top += line.height();
+    }
+    layout.endLayout();
+}
+
 QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
 {
+    if (r.kind == lemma::Region::Kind::Text) {
+        QTextLayout layout;
+        layoutText(layout, r);
+        const QTextLine first = layout.lineAt(0);
+        const QTextLine last = layout.lineAt(layout.lineCount() - 1);
+        double width = r.id == editingId_ ? r.width : 4.0;
+        for (int i = 0; i < layout.lineCount(); ++i) {
+            width = std::max(width, layout.lineAt(i).naturalTextWidth());
+        }
+        return QRectF(r.x, first.y(), width, last.y() + last.height() - first.y());
+    }
+
     const QFontMetricsF fm(font_);
     const double width = std::max(fm.horizontalAdvance(shownText(r) + hintText(r)), 4.0);
     QRectF rect(r.x, r.y - fm.ascent(), width, fm.ascent() + fm.descent());
@@ -292,13 +335,49 @@ int WorksheetCanvas::regionAt(QPointF docPos) const
     return 0;
 }
 
+int WorksheetCanvas::resizeHandleAt(QPointF docPos) const
+{
+    const auto& regions = worksheet_.regions();
+    for (auto it = regions.rbegin(); it != regions.rend(); ++it) {
+        if (it->kind != lemma::Region::Kind::Text) {
+            continue;
+        }
+        // The edge of the box drawn around the region, give or take a few pixels.
+        const QRectF rect = regionRect(*it).adjusted(-3, -2, 3, 2);
+        if (std::abs(docPos.x() - rect.right()) <= 4 && docPos.y() >= rect.top() && docPos.y() <= rect.bottom()) {
+            return it->id;
+        }
+    }
+    return 0;
+}
+
 QPointF WorksheetCanvas::sourcePosition(const lemma::Region& r, int index) const
 {
+    if (r.kind == lemma::Region::Kind::Text) {
+        QTextLayout layout;
+        layoutText(layout, r);
+        const QTextLine line = layout.lineForTextPosition(index);
+        return {line.cursorToX(index), line.y() + line.ascent()};
+    }
     return {r.x + QFontMetricsF(font_).horizontalAdvance(fromUtf8(r.source).left(index)), r.y};
 }
 
-int WorksheetCanvas::caretIndexAt(const lemma::Region& r, double docX) const
+int WorksheetCanvas::caretIndexAt(const lemma::Region& r, QPointF docPos) const
 {
+    if (r.kind == lemma::Region::Kind::Text) {
+        QTextLayout layout;
+        layoutText(layout, r);
+        QTextLine line = layout.lineAt(layout.lineCount() - 1);
+        for (int i = 0; i < layout.lineCount(); ++i) {
+            if (docPos.y() < layout.lineAt(i).y() + layout.lineAt(i).height()) {
+                line = layout.lineAt(i);
+                break;
+            }
+        }
+        return line.xToCursor(docPos.x());
+    }
+
+    const double docX = docPos.x();
     const QFontMetricsF fm(font_);
     const QString text = fromUtf8(r.source);
     int best = 0;
@@ -311,6 +390,40 @@ int WorksheetCanvas::caretIndexAt(const lemma::Region& r, double docX) const
         }
     }
     return best;
+}
+
+int WorksheetCanvas::textCaretFor(const lemma::Region& r, int key) const
+{
+    QTextLayout layout;
+    layoutText(layout, r);
+    const QString& text = layout.text();
+    const QTextLine line = layout.lineForTextPosition(caret_);
+    switch (key) {
+    case Qt::Key_Home:
+        return line.textStart();
+    case Qt::Key_End: {
+        // Stop before a line break, or the space a wrapped line ends with, so the caret stays on this line.
+        int end = line.textStart() + line.textLength();
+        if (end > line.textStart() && end < text.size()
+            && (text.at(end - 1) == QChar::LineSeparator || text.at(end - 1).isSpace())) {
+            --end;
+        }
+        return end;
+    }
+    case Qt::Key_Up:
+    case Qt::Key_Down: {
+        const int target = line.lineNumber() + (key == Qt::Key_Up ? -1 : 1);
+        if (target < 0) {
+            return 0;
+        }
+        if (target >= layout.lineCount()) {
+            return static_cast<int>(text.size());
+        }
+        return layout.lineAt(target).xToCursor(line.cursorToX(caret_));
+    }
+    default:
+        return caret_;
+    }
 }
 
 int WorksheetCanvas::pageCount() const
@@ -340,6 +453,10 @@ void WorksheetCanvas::paintRegions(QPainter& painter, bool onScreen) const
 {
     const QFontMetricsF fm(font_);
     for (const lemma::Region& r : worksheet_.regions()) {
+        if (r.kind == lemma::Region::Kind::Text) {
+            paintTextRegion(painter, r, onScreen);
+            continue;
+        }
         const bool isError = r.result.status == lemma::RegionResult::Status::Error;
         const QString text = shownText(r);
         const QPointF baseline(r.x, r.y);
@@ -393,6 +510,36 @@ void WorksheetCanvas::paintRegions(QPainter& painter, bool onScreen) const
                 painter.setPen(QPen(kTextColor, 1.2));
                 painter.drawLine(QPointF(x, r.y - fm.ascent()), QPointF(x, r.y + fm.descent()));
             }
+        }
+    }
+}
+
+void WorksheetCanvas::paintTextRegion(QPainter& painter, const lemma::Region& r, bool onScreen) const
+{
+    QTextLayout layout;
+    layoutText(layout, r);
+    painter.setPen(kTextColor);
+    layout.draw(&painter, {0, 0});
+
+    if (onScreen && selection_.contains(r.id)) {
+        painter.setPen(QPen(kEditBoxColor, 1.0));
+        painter.setBrush(kSelectionFill);
+        painter.drawRect(regionRect(r).adjusted(-3, -2, 3, 2));
+    }
+
+    if (onScreen && r.id == editingId_) {
+        const QRectF box = regionRect(r).adjusted(-3, -2, 3, 2);
+        painter.setPen(QPen(kEditBoxColor, 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(box);
+        // A grip on the right edge, which sets the wrap width.
+        painter.setBrush(kEditBoxColor);
+        painter.drawRect(QRectF(box.right() - 2, box.center().y() - 4, 4, 8));
+        if (caretVisible_) {
+            const QTextLine line = layout.lineForTextPosition(caret_);
+            const double x = line.cursorToX(caret_);
+            painter.setPen(QPen(kTextColor, 1.2));
+            painter.drawLine(QPointF(x, line.y()), QPointF(x, line.y() + line.height()));
         }
     }
 }
@@ -520,6 +667,8 @@ void WorksheetCanvas::endEditing()
     }
     const lemma::Region* r = worksheet_.region(editingId_);
     const bool empty = !r || fromUtf8(r->source).trimmed().isEmpty();
+    const bool fresh = editingId_ == freshId_;
+    freshId_ = 0;
     RegionStates before;
     if (empty) {
         before = capture({editingId_});
@@ -529,7 +678,9 @@ void WorksheetCanvas::endEditing()
     caretBlink_.stop();
     if (empty) {
         contentChanged();
-        record(tr("Delete"), std::move(before), EditKind::Erasing, caret_);
+        if (!fresh) {
+            record(tr("Delete"), std::move(before), EditKind::Erasing, caret_);
+        }
     } else {
         viewport()->update();
     }
@@ -546,6 +697,10 @@ void WorksheetCanvas::moveCaret(int position)
 void WorksheetCanvas::insertText(const QString& text, bool created)
 {
     // A region created for this text didn't exist before it, as far as undo is concerned.
+    if (editingId_ == freshId_) {
+        created = true;
+        freshId_ = 0;
+    }
     RegionStates before = created ? RegionStates{{editingId_, std::nullopt}} : capture({editingId_});
     const int caretBefore = caret_;
     lemma::Region* r = worksheet_.region(editingId_);
@@ -600,6 +755,11 @@ void WorksheetCanvas::mousePressEvent(QMouseEvent* event)
     const QPointF pos = toDocument(event->position());
     const bool shift = event->modifiers() & Qt::ShiftModifier;
     pressPos_ = pos;
+    if (const int id = resizeHandleAt(pos)) {
+        resizingId_ = id;
+        resizeBefore_ = capture({id});
+        return;
+    }
     if (const int id = regionAt(pos)) {
         if (shift) {
             endEditing();
@@ -630,7 +790,12 @@ void WorksheetCanvas::mousePressEvent(QMouseEvent* event)
 void WorksheetCanvas::updateCursor(QPointF viewportPos)
 {
     // An I-beam where a click edits text, an arrow on empty page space.
-    viewport()->setCursor(regionAt(toDocument(viewportPos)) ? Qt::IBeamCursor : Qt::ArrowCursor);
+    const QPointF pos = toDocument(viewportPos);
+    if (resizeHandleAt(pos)) {
+        viewport()->setCursor(Qt::SizeHorCursor);
+    } else {
+        viewport()->setCursor(regionAt(pos) ? Qt::IBeamCursor : Qt::ArrowCursor);
+    }
 }
 
 void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
@@ -641,6 +806,14 @@ void WorksheetCanvas::mouseMoveEvent(QMouseEvent* event)
     }
     const QPointF pos = toDocument(event->position());
     const bool pastThreshold = (pos - pressPos_).manhattanLength() >= QApplication::startDragDistance();
+
+    if (resizingId_) {
+        // The edge follows the mouse, snapped to the grid.
+        lemma::Region* r = worksheet_.region(resizingId_);
+        r->width = std::max(kMinTextWidth, std::round((pos.x() - 3 - r->x) / kGrid) * kGrid);
+        contentChanged();
+        return;
+    }
 
     if (bandPressed_) {
         banding_ = banding_ || pastThreshold;
@@ -687,6 +860,14 @@ void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton) {
         return;
     }
+    if (resizingId_) {
+        if (resizingId_ != freshId_) { // a fresh region's width is recorded with its first character
+            record(tr("Resize"), std::move(resizeBefore_));
+        }
+        resizingId_ = 0;
+        updateCursor(event->position());
+        return;
+    }
     if (bandPressed_) {
         if (!banding_) {
             crosshair_ = snap(pressPos_); // a plain click on empty space
@@ -702,7 +883,7 @@ void WorksheetCanvas::mouseReleaseEvent(QMouseEvent* event)
         record(tr("Move"), std::move(dragBefore_));
     } else {
         const lemma::Region* r = worksheet_.region(pressedId_);
-        beginEditing(pressedId_, caretIndexAt(*r, pressPos_.x()));
+        beginEditing(pressedId_, caretIndexAt(*r, pressPos_));
     }
     pressedId_ = 0;
     updateCursor(event->position());
@@ -718,6 +899,23 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
     if (editingId_) {
         const lemma::Region* r = worksheet_.region(editingId_);
         const int length = static_cast<int>(fromUtf8(r->source).size());
+        const bool isText = r->kind == lemma::Region::Kind::Text;
+        if (isText) {
+            switch (event->key()) {
+            case Qt::Key_Return:
+            case Qt::Key_Enter:
+                insertText(QStringLiteral("\n"));
+                return;
+            case Qt::Key_Up:
+            case Qt::Key_Down:
+            case Qt::Key_Home:
+            case Qt::Key_End:
+                moveCaret(textCaretFor(*r, event->key()));
+                return;
+            default:
+                break;
+            }
+        }
         switch (event->key()) {
         case Qt::Key_Return:
         case Qt::Key_Enter:
@@ -791,7 +989,17 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         QAbstractScrollArea::keyPressEvent(event);
         return;
     }
-    if (text == ":") {
+    if (!editingId_ && text == QStringLiteral("\"")) {
+        // Mathcad's shortcut for a text region. It wraps at the right margin until resized.
+        const double width = std::max(kMinTextWidth, kPageWidth - kMargin - crosshair_.x());
+        const int id = worksheet_.addTextRegion(crosshair_.x(), crosshair_.y(), width);
+        beginEditing(id, 0);
+        freshId_ = id;
+        contentChanged();
+        return;
+    }
+    const lemma::Region* editing = worksheet_.region(editingId_);
+    if (text == ":" && (!editing || editing->kind == lemma::Region::Kind::Math)) {
         text = ":="; // Mathcad's shortcut for definitions
     }
     if (!editingId_) {
