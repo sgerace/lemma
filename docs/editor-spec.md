@@ -19,8 +19,9 @@ Goals:
   the next operator wraps exactly that.
 - Every state the editor can reach is a valid tree. Incomplete input shows
   placeholders, never a parse error.
-- Every tree round-trips through the linear syntax (section 11), so `.lemma` files stay
-  readable and the engine keeps working on the existing AST.
+- The tree is the source of truth: it is what `.lemma` files store and what the
+  engine evaluates (section 11). The linear syntax is only a way in and out, for paste
+  and copy, so it never has to reproduce a tree exactly.
 
 Not in the first version (each can be added later without changing the model):
 matrices, literal subscripts (Mathcad's `x.1`), absolute value bars, n-th roots,
@@ -32,13 +33,15 @@ and 2D editing of plot placeholders (they stay linear text).
 The editor works on its own tree (in `lemma_core`, no Qt), separate from
 `lemma::Node`. It differs from the AST in three ways: it can hold placeholders, it
 keeps parentheses the user typed, and it keeps the statement structure (`:=`, `=`) as
-nodes.
+nodes. It is saved as is, and lowered to `lemma::Node` for evaluation (section 11).
+
+The linear form column is what Copy writes (section 11.3).
 
 | Node | Children (slots) | Shown as | Linear form |
 |---|---|---|---|
 | `Number` | text, e.g. `9.81`, `1e-3` | the text | the text |
 | `Identifier` | text, e.g. `L`, `x1`, `kN` | the text, italic for variables | the text |
-| `Placeholder` | none | `■` (small filled square) | none yet, see 11 |
+| `Placeholder` | none | `■` (small filled square) | none: not copyable |
 | `Binary` | lhs, rhs; op is `+`, `−`, `·`, juxtaposition, or an operator placeholder | `a + b`, `a − b`, `a·b`, `2 m`, `a □ b` | `a + b`, `a - b`, `a*b`, `2 m` |
 | `Negate` | operand | `−a` | `-a` |
 | `Fraction` | numerator, denominator | stacked, with a rule | `num/den` |
@@ -60,15 +63,15 @@ Terms used below:
   lays out on one line; boxes interrupt it.
 
 Juxtaposition is a `Binary` multiplication whose style is "juxtaposed". It is created
-by typing a letter right after a number (`2m`) and by the linear form `10 N`, and it is
-shown as a thin space. It evaluates exactly like `·`.
+by typing a letter right after a number (`2m`) and by pasting the linear form `10 N`,
+and it is shown as a thin space. It evaluates exactly like `·`. Two letters in a row
+are always one name: `LF` is the variable `LF`, and `L·F` needs `*`.
 
 **Implied parentheses.** Parentheses that the tree's precedence requires are drawn
 by layout and are not nodes. `·` over `a` and `b + c` draws as `a·(b + c)`; the
 parentheses belong to the `b + c` box and are not selectable on their own. A `Group`
-is only created when the user types `(` (section 8.2), or when loading linear text
-whose parentheses aren't required (section 11). A fraction's numerator never needs
-implied parentheses, since the rule groups it.
+is only created when the user types `(` (section 8.2). A fraction's numerator never
+needs implied parentheses, since the rule groups it.
 
 **Precedence**, loosest to tightest, matching the parser: `:=` and `=` (statement
 only); `+ −`; `· /` and juxtaposition; unary `−`; `^` (right associative). `Fraction`
@@ -348,65 +351,104 @@ Delete mirrors Backspace (left ↔ right, end of slot ↔ start of slot).
 
 ## 10. Clipboard and undo
 
-- Cut and Copy put the selection on the clipboard as linear text (section 11), so it
-  pastes anywhere as readable math. With an insertion point, they copy the whole
-  region.
-- Paste parses the clipboard as linear syntax and inserts the resulting tree: it
-  replaces a selection or placeholder, and otherwise multiplies, as typing an operand
-  does (6.4). If the text doesn't parse, nothing is pasted and the error is shown.
-  Pasting does not replay keystrokes, so `x^2+1` pastes as `x² + 1`, not `x^[2 + 1]`.
+- Cut and Copy put the selection on the clipboard as linear text (section 11.3), so
+  it pastes anywhere as readable math. With an insertion point, they copy the whole
+  region. A selection containing a placeholder has no linear form; Copy then does
+  nothing.
+- Paste parses the clipboard as linear syntax and inserts the resulting tree (11.3):
+  it replaces a selection or placeholder, and otherwise multiplies, as typing an
+  operand does (6.4). If the text doesn't parse, nothing is pasted and the error is
+  shown. Pasting does not replay keystrokes, so `x^2+1` pastes as `x² + 1`, not
+  `x^[2 + 1]`.
 - Undo and redo work as they do now: each structural edit (operator, wrap, delete,
   paste) is its own step; consecutive characters typed into one leaf, and consecutive
   characters erased from one leaf, merge into one step. Undo restores the caret and
   selection as they were before the step.
 
-## 11. Linear round-trip
+## 11. Storage, evaluation and linear text
 
-The editor tree must convert to and from the linear syntax, which stays the file
-format and the engine's input. This is the "Round-trip" item of the issue; this
-section states only what the editing model needs from it.
+The editor tree is the only representation of a math region. It is saved as a tree,
+evaluated from the tree, and converted to and from linear text only for the
+clipboard. Nothing requires tree → text → tree to come back identical.
 
-Tree to linear:
+### 11.1 File format
+
+`.lemma` stays JSON. A math region stores its tree instead of a `source` string, as
+nested objects with full kind names and named slots. For `I := b h^3 / 12`:
+
+```json
+{"kind": "definition",
+ "lhs": {"kind": "identifier", "text": "I"},
+ "rhs": {"kind": "fraction",
+         "num": {"kind": "multiply", "style": "juxtaposed",
+                 "lhs": {"kind": "identifier", "text": "b"},
+                 "rhs": {"kind": "power",
+                         "base": {"kind": "identifier", "text": "h"},
+                         "exp": {"kind": "number", "text": "3"}}},
+         "den": {"kind": "number", "text": "12"}}}
+```
+
+- `Binary` saves as `add`, `subtract` or `multiply` (with `"style": "dot"` or
+  `"juxtaposed"`), or `missing-operator` for an operator placeholder.
+- Numbers keep the text as typed (`9.810`), so editing them shows what the user typed.
+- Placeholders and operator placeholders are ordinary nodes, so a half-finished region
+  saves and loads like any other.
+- Node ids are not saved; they are assigned on load.
+- Text regions and plot placeholders keep their strings.
+
+The full schema is settled with the "file format" item of the issue. The version goes
+from 3 to 4. Lemma is pre-release, so version 4 does not load older files: they are
+refused with a clear message, not migrated.
+
+### 11.2 Evaluation
+
+The tree is lowered directly to `lemma::Node`, so the evaluator, units and their tests
+are unchanged and no text is parsed on the way.
+
+- Each `lemma::Node` records the id of the editor node it came from. Errors refer to
+  that node, so the editor highlights the offending subtree. Byte offsets remain only
+  for text that is still parsed: plot placeholders and pasted text.
+- `Group` lowers to its contents, juxtaposition to `*`, `Radical` to a call of `sqrt`,
+  `Fraction` to `/`.
+- A region containing a placeholder or an operator placeholder is incomplete. It is
+  not evaluated and shows "Fill in the placeholder" on the first one.
+
+### 11.3 Linear text (copy and paste)
+
+Copy writes linear text from the tree. Its only promise is that the text parses back
+to the same value:
 
 - `Fraction` writes `num/den`, adding parentheses around either side only when linear
   precedence needs them: `[a + b / c]` → `(a + b)/c`, `[a / b·c]` → `a/(b*c)`.
 - `Power`, `Radical`, `Call`, `Group`, juxtaposition and the statement nodes write
   their linear forms (section 2). Implied parentheses are written.
-- A tree with a placeholder or an operator placeholder has no linear form. Such a
-  region is incomplete: it is not evaluated, and shows an error ("Fill in the
-  placeholder") positioned on the first placeholder. For saving, placeholders need a
-  spelling in the file (to be decided under "Round-trip"; one option is a reserved
-  token such as `?`).
 
-Linear to tree:
+Paste parses linear text with the existing parser and converts the AST node by node:
+`/` becomes a `Fraction`, `sqrt(x)` a `Radical`, `10 N` a juxtaposition. Parentheses
+in pasted text become no `Group`: the parser drops them, and layout draws the ones
+precedence needs. So `(a)*b` pastes as `a·b`. That is acceptable for a paste, and it
+avoids changing the parser.
 
-- Parsing linear text gives the AST, which converts node by node. `sqrt(x)` becomes a
-  `Radical`, `/` a `Fraction`.
-- Parentheses become a `Group` only if neither precedence nor a slot needs them:
-  `a*(b+c)` → `a·(b + c)` with implied parentheses; `(a+b)/c` → `[a + b / c]` with no
-  group; `(a)*b` → a `Group` around `a`. This needs the parser to record where
-  parentheses were, which it currently drops.
+## 12. Decisions
 
-Tree → linear → tree is the identity. Linear → tree → linear can tidy spacing and drop
-parentheses that a slot made redundant (`a/(b)` → `a/b`); it never changes the value.
+Settled in review:
 
-## 12. Open questions for review
+1. **Slots capture typing** (5.3): typing `x^2+1` keystroke by keystroke gives
+   `x^[2 + 1]`, as in Mathcad. The user leaves a slot with Right or Space.
+2. **Operator placeholder** (9, rule 4): Backspace after `a + |b` gives `a □ b`, as in
+   Mathcad 15, rather than merging `a` and `b` or deleting `b`.
+3. **Juxtaposition** (2, 8.1): only a letter after a number juxtaposes (`10 N`).
+   Letters in a row are one name (`LF`); multiplying names needs `*`.
+4. **`(` wraps a selection** (8.2), rather than Mathcad's `'`, so `(` means one thing.
+5. **The tree is the file format and the engine's input** (11). Linear text is only for
+   the clipboard. The file stays JSON: worksheets are small, and JSON is readable,
+   diffable and already supported by Qt. Protobuf would add a build dependency and
+   binary files for no gain at this size; XML is more verbose to no benefit, and
+   MathML is better offered as a separate export. Pre-release, older file versions are
+   refused rather than migrated.
 
-1. **Slots capture typing** (5.3): `x^2+1` typed keystroke by keystroke gives
-   `x^[2 + 1]`, as in Mathcad. The alternative, auto-leaving the exponent on a
-   lower-precedence operator, matches linear typing better but makes it impossible to
-   type `x^[2 + 1]` without parentheses. The spec chooses Mathcad's behavior.
-2. **Insertion point vs. selection** (3): operators climb by precedence from an
+Still open:
+
+6. **Insertion point vs. selection** (3): operators climb by precedence from an
    insertion point and wrap exactly from a selection. Is the underline-means-exact
    rule clear enough, or should Space's first step be skipped for leaves?
-3. **Operator placeholder** (9, rule 4): Backspace after `a + |b` gives `a □ b`
-   (Mathcad 15) rather than merging `a` and `b` into one identifier `ab` (a text
-   editor) or deleting `b`. Agreed?
-4. **Juxtaposition** (2, 8.1): only number-then-letter juxtaposes (`10 N`). After an
-   identifier or box, a letter extends the identifier or multiplies with `·`. Should
-   `L F` (two names) be typeable as juxtaposition, given Space is taken?
-5. **`(` vs `'`** (8.2): `(` with a selection wraps it. Mathcad uses `'` for this, and
-   `(` there inserts a lone left parenthesis. Lemma's choice keeps `(` meaning one
-   thing.
-6. **Placeholder spelling in files** (11): needed so a half-finished region can be
-   saved; to be settled with the round-trip item.

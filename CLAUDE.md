@@ -38,7 +38,9 @@ ctest --test-dir build/debug --output-on-failure
 - Values are stored in SI base units; `Dimension` holds rational exponents so
   `sqrt(m^2)` is exactly `m`.
 - `.lemma` files carry `"format": "lemma-worksheet"` and an integer `"version"`. Bump the
-  version on any incompatible change and keep loading older versions.
+  version on any incompatible change. Lemma is pre-release, so don't migrate older
+  versions: refuse them with a clear message. Once Lemma is released, keep loading
+  every released version.
 
 ## Planned direction
 
