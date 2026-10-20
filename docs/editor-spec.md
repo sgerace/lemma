@@ -1,7 +1,7 @@
 # 2D math editor: editing model
 
-Status: **draft for review** (issue #7). Nothing here is implemented yet. Per the
-issue, no interaction code is written until this spec is agreed.
+Status: **agreed in review** (issue #7); see section 12. Nothing here is implemented
+yet.
 
 This spec defines how a math region is edited once it is a 2D, Mathcad-style
 expression instead of a line of text: what the editor's tree holds, where the caret
@@ -446,9 +446,8 @@ Settled in review:
    binary files for no gain at this size; XML is more verbose to no benefit, and
    MathML is better offered as a separate export. Pre-release, older file versions are
    refused rather than migrated.
-
-Still open:
-
-6. **Insertion point vs. selection** (3): operators climb by precedence from an
-   insertion point and wrap exactly from a selection. Is the underline-means-exact
-   rule clear enough, or should Space's first step be skipped for leaves?
+6. **Space first selects the leaf** (3, 7): from an insertion point, the first Space
+   underlines just the leaf at the caret, so the next operator wraps only it
+   (`a·b|` then `Space + c` gives `a·(b + c)`). It is the only keyboard way to wrap the
+   last operand alone, and it keeps Space consistent between leaves and boxes. An
+   underline always means the next operator wraps exactly what is underlined.
