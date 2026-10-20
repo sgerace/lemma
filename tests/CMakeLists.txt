@@ -13,6 +13,7 @@ add_executable(lemma_tests
     test_math.cpp
     test_math_layout.cpp
     test_parser.cpp
+    test_symbolic.cpp
     test_worksheet.cpp
 )
 target_link_libraries(lemma_tests PRIVATE lemma_core Catch2::Catch2WithMain)

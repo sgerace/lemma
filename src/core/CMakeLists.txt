@@ -17,6 +17,9 @@ add_library(lemma_core STATIC
     src/math_layout.cpp
     src/parser.cpp
     src/plot.cpp
+    src/symbolic.cpp
+    src/symbolic_bridge.cpp
+    src/symbolic_ops.cpp
     src/units.cpp
     src/worksheet.cpp
 )

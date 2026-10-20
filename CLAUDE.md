@@ -29,7 +29,9 @@ ctest --test-dir build/debug --output-on-failure
   dimensions/quantities, unit registry, formatting, lexer/parser to AST, evaluator,
   worksheet, and the 2D math editor's model: the editor tree (`math.h`), editing
   commands (`math_edit.h`) and box layout (`math_layout.h`, measuring text through
-  `MathFontMetrics`). Keep it testable from Catch2 without a GUI.
+  `MathFontMetrics`), and the symbolic engine: canonical expressions (`symbolic.h`),
+  operations (`symbolic_ops.h`), and the bridge to and from the editor tree with the
+  display rules (`symbolic_bridge.h`). Keep it testable from Catch2 without a GUI.
 - `src/app` (`lemma_app` library + thin `main.cpp`) is the Qt Widgets layer:
   `WorksheetCanvas` (page, crosshair, editing, painting), `MathRender` (the bundled
   STIX Two Math font and painting math layouts), `DocumentIO` (JSON `.lemma` files),
@@ -56,7 +58,8 @@ grows it) with TeX-style box layout; `docs/editor-spec.md` is the agreed behavio
 change the spec along with the editor. Don't adopt a third-party math editor widget.
 Still to come: matrices, literal subscripts, and the other non-goals listed in the
 spec; reading layout constants from the font's `MATH` table instead of hard-coding
-them. Symbolic math (e.g. SymEngine) comes later and is not part of the MVP.
+them. Symbolic math (`→`) is being built in-house per `docs/symbolic-spec.md`, in the steps
+of its section 13; change the spec along with the engine.
 
 ## Conventions
 
@@ -65,7 +68,8 @@ them. Symbolic math (e.g. SymEngine) comes later and is not part of the MVP.
 - Engine changes need Catch2 tests in `tests/`. Canvas or interaction changes need a
   case in `tests/gui/test_canvas.cpp`. Editing behavior is tested in
   `tests/test_math.cpp` in the spec's notation (`a + b·c|`); keep the randomized test
-  there passing.
+  there passing. Symbolic results are tested in `tests/test_symbolic.cpp` as the linear
+  text Copy writes; keep its randomized check against numeric evaluation passing.
 - Source strings are UTF-8 (`std::string` in core). The app converts with
   `QString::fromStdString` / `toStdString`. Errors in math regions name a node
   (`Error::node()`, `RegionResult::errorNode`); errors in parsed text (plot fields,

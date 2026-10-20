@@ -20,7 +20,7 @@ before plugging numbers in. The result is typeset with the 2D layout from #7.
 | Assumptions | Free symbols are positive reals; the keyword `real` opts a name out | 5.3 |
 | Symbolic definitions | `θ(x) := y(x) → diff, x` defines a function from a symbolic result, to evaluate or plot | 7.1 |
 | Units | Unit names are symbols with known dimensions, kept as typed and combined like other powers; mismatches are errors, as in numeric evaluation | 8 |
-| Conversion | Tree ↔ engine expressions, with each engine node's origin, so errors name a node | 4 |
+| Conversion | Tree ↔ engine expressions; errors name the tree node they arise in | 4 |
 | Storage | The `→` statement is a new root node, so `.lemma` goes to version 5. Results are recomputed, not stored | 10 |
 | Numbers | Exact arithmetic throughout, shown as decimals once a decimal number is involved | 5.2 |
 | First cut | All seven keywords, each within a documented scope (section 9), and symbolic definitions | 9, 12, 13 |
@@ -90,9 +90,9 @@ dimensionally sound.
 
 ## 4. The bridge
 
-**Tree to `Expr`.** Lowering works like numeric lowering (`lowerMath`): each `Expr`
-built from a `MathNode` records the node's id as its origin, so an error ("Units don't
-match", "Can't divide by zero") underlines the right part of the region. Groups
+**Tree to `Expr`.** Lowering works like numeric lowering (`lowerMath`), node by node,
+and an error raised while building a node's expression ("Units don't match",
+"Division by zero") names that node, so it underlines the right part of the region. Groups
 disappear, fractions become products with negative exponents, radicals become
 exponent ½, and juxtaposition is multiplication.
 
@@ -112,9 +112,8 @@ forms:
 | Number | an exact `Rational`, or a decimal (section 5.2) | `3/8`, `2.5` |
 | Symbol | a name, and what it is: a variable, a unit (with its `Dimension`), or a constant (π, e, g) | `L`, `kN`, `π` |
 | Sum | a numeric term plus terms with coefficients | `3 + 2 x − y` |
-| Product | a numeric coefficient times factors, each a base raised to a `Rational` exponent | `3/8 w L⁴ E⁻¹ I⁻¹` |
-| Power | a base raised to an expression exponent, when the exponent isn't a number | `2ˣ`, `e^(k t)` |
-| Function | an elementary function applied to an expression | `sin(θ)`, `ln(x)` |
+| Product | a numeric coefficient times factors, each a base raised to an exponent (a number, or any expression); a single power is a product of one factor | `3/8 w L⁴ E⁻¹ I⁻¹`, `x²`, `e^(k t)` |
+| Function | an elementary function applied to an expression: sin, cos, tan, asin, acos, atan, ln, log and abs (√ and exp are powers) | `sin(θ)`, `ln(x)`, `\|x − y\|` |
 | Call | an undefined function applied to arguments, kept as is | `f(x)` |
 
 ### 5.2 Canonical form
@@ -127,7 +126,12 @@ can be compared and hashed:
   `x⁵`; `√x · √x` is `x`).
 - A sum's terms and a product's factors are kept in a fixed total order. This is the
   storage order only; the display order is chosen separately (section 11).
-- Integers and fractions are exact. A number typed with a decimal point is exact too
+- A multiple of a sum is multiplied out inside a sum (`1 − (z + 3)` is `−z − 2`),
+  but kept on its own (`2 (x + 1)`).
+- Number roots are reduced: `√8` is `2 √2`, `√2 · √6` is `2 √3`.
+- Integers and fractions are exact. A number too large for an exact fraction (64-bit
+  numerator and denominator) becomes a decimal, as does anything computed from one.
+- A number typed with a decimal point (or in scientific notation) is exact too
   (2.5 is 5/2), but marked as decimal, and a result coefficient with decimal input
   in it is shown as a decimal to the worksheet's precision (`2.5 x` stays `2.5 x`,
   not `5/2 x`). This matches what people expect from Mathcad.
@@ -135,7 +139,9 @@ can be compared and hashed:
 ### 5.3 Built-in assumptions
 
 Symbols are positive reals. So `√(x²)` is `x`, `ln(a b)` can be `ln(a) + ln(b)`,
-and `(a b)^(1/2)` is `√a √b`. This is the one deliberate departure from a
+and `(a b)^(1/2)` is `√a √b`. Sums aren't assumed positive: `√((x − y)²)` is
+`|x − y|`, and a root splits only over the factors known to be positive, so
+`√(x (y − 1)(y − 2))` is `√x √((y − 1)(y − 2))`. This is the one deliberate departure from a
 general-purpose CAS (Mathcad's symbols are complex until `assume` says otherwise): it
 is right for lengths, loads and moduli, and it is what keeps results short.
 
@@ -215,7 +221,7 @@ As in Mathcad, a name defined above the region is replaced by its definition:
   function's body sees the definitions above *its* definition, as numerically
   (closure snapshot).
 - **Built-in functions** (sin, ln, …) are the elementary functions of section 5.1;
-  `min`, `max` and `abs` are kept as calls.
+  `min` and `max` are kept as calls.
 - **Opting out.** The keyword `keep, L, P` leaves the names after it symbolic. It
   combines with another keyword (6.2): `keep, P; diff, x`. Mathcad's idiom of
   redefining a name as itself (`x := x`) also works, since substitution then gives
@@ -353,18 +359,23 @@ Raising an `Expr` to a tree chooses a readable form:
   `w L⁴/(8 E I)`. Numeric coefficients go in front, or into the fraction when they
   are its only numerator (`3/(2 x)`). Negative fractional exponents become radicals in
   the denominator.
+- **Main variable.** The keyword's `x`, or else the variable of highest degree, then
+  the most used, then the last to appear.
 - **Order of factors.** Numbers first, then constants (π), then variables in the
-  order they first appear in the region's expression, then units last and upright
-  (`10 kN·m`, `P L³/(3 E I)`).
-- **Order of terms.** For a polynomial in one main variable (the keyword's `x`, or
-  the variable of highest degree), descending powers: `x² − 5x + 6`. Otherwise, the
-  order of first appearance.
+  order they first appear in the region's expression, with the main variable last
+  among them (`a x²`, `k t`), then roots (`2 x √y`), functions, sums, and units last
+  and upright (`10 kN·m`, `P L³/(3 E I)`).
+- **Order of terms.** For a polynomial in a variable of degree above one, descending
+  powers: `x² − 5x + 6`. Otherwise, the order of first appearance, with the terms
+  that have the main variable after those that don't (`2 L − x`). A constant goes
+  last.
 - **Signs.** A negative term is written as a subtraction (`a − b`, not `a + (−1) b`);
   a sum whose terms are all negative is negated as a whole.
 - **Roots.** Exponent ½ is `√`; other fractional exponents stay as powers (`x^(2/3)`)
   until #30 gives n-th roots.
-- **Juxtaposition.** A coefficient times a symbol, and units after a number, are
-  juxtaposed (`3 x`, `10 kN`); other products use `·`, as typed regions do.
+- **Juxtaposition.** Factors are juxtaposed, as in a textbook (`3 x`, `w L⁴`,
+  `x sin(k x)`), except before a number, which would read as part of the one before
+  (`3·2^(1/3)`), and between units (`kN·m`).
 
 ## 12. Worked examples
 
