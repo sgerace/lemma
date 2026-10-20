@@ -5,9 +5,13 @@
 #include "lemma/error.h"
 #include "lemma/math.h"
 #include "lemma/math_edit.h"
+#include "lemma/math_layout.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -166,6 +170,8 @@ TEST_CASE("Operators on placeholders and in the middle of a leaf (5.1, 5.2)")
     CHECK(typed("abc{left}+") == "ab + |c");
     CHECK(typed("a+b{left}-") == "a + −|b");
     CHECK(typed("x^-2") == "x^[−2|]");
+    CHECK(after("f(x)", "{home}-") == "−|f(x)");     // before a name is before the call
+    CHECK(after("f(x)", "{home}{right}+") == "f|(x)"); // a name can't be split
 }
 
 TEST_CASE("Right steps through every stop in reading order (6.1)")
@@ -393,4 +399,115 @@ TEST_CASE("Lowering names the node an error is about")
     CHECK(s.params == std::vector<std::string>{"x", "y"});
     CHECK(lowerMath(mathFromLinear("x =")).kind == Statement::Kind::Evaluation);
     CHECK(lowerMath(MathNode()).kind == Statement::Kind::Empty);
+}
+
+namespace {
+
+class SimpleMetrics : public MathFontMetrics {
+public:
+    Extent measure(std::string_view text, double size) const override
+    {
+        return {0.5 * size * static_cast<double>(text.size()), 0.7 * size, 0.2 * size};
+    }
+};
+
+const SimpleMetrics kSimpleMetrics;
+
+// The shape every tree must keep, whatever is typed.
+void checkTree(const MathNode& n, bool root)
+{
+    using K = MathNode::Kind;
+    INFO(toLinear(n));
+    std::size_t expected = 0;
+    switch (n.kind) {
+    case K::Number:
+    case K::Identifier:
+        REQUIRE(!n.text.empty());
+        break;
+    case K::Placeholder:
+        break;
+    case K::Binary:
+    case K::Fraction:
+    case K::Power:
+        expected = 2;
+        break;
+    case K::Definition:
+    case K::Evaluation:
+        REQUIRE(root); // statements are only ever the whole region
+        expected = 2;
+        break;
+    case K::Negate:
+    case K::Radical:
+    case K::Group:
+        expected = 1;
+        break;
+    case K::Call:
+        REQUIRE(n.children.size() >= 2);
+        REQUIRE((n.children[0].kind == K::Identifier || n.children[0].kind == K::Placeholder));
+        expected = n.children.size();
+        break;
+    }
+    REQUIRE(n.children.size() == expected);
+    for (const MathNode& c : n.children) {
+        checkTree(c, false);
+    }
+}
+
+void checkEditor(const MathEditor& e)
+{
+    checkTree(e.root(), true);
+    const MathCaret& c = e.caret();
+    if (c.selected) {
+        REQUIRE(findMathNode(e.root(), c.node));
+    } else {
+        const std::vector<MathCaret> stops = mathStops(e.root());
+        REQUIRE(std::find(stops.begin(), stops.end(), c) != stops.end());
+    }
+}
+
+} // namespace
+
+TEST_CASE("Any sequence of keys leaves a valid tree and caret")
+{
+    const char* keys[] = {"a", "b", "x", "2", "1", ".", "e", "+", "-", "*", "/", "^", "(", ")", ",", "\\",
+                          ":", "=", "{space}", "{shift-space}", "{left}", "{right}", "{home}", "{end}", "{bs}",
+                          "{del}", "{ins}", "{tab}", "{shift-tab}", "f(", "_"};
+    std::uint32_t seed = 12345;
+    const auto random = [&](std::size_t n) {
+        seed = seed * 1664525u + 1013904223u; // a fixed sequence, so failures reproduce
+        return static_cast<std::size_t>((seed >> 8) % n);
+    };
+    for (int run = 0; run < 1000; ++run) {
+        MathEditor e;
+        std::string history;
+        for (int i = 0; i < 25; ++i) {
+            const char* key = keys[random(std::size(keys))];
+            history += key;
+            INFO(history);
+            ::keys(e, key);
+            checkEditor(e);
+            if (random(20) == 0) {
+                e.paste(mathFromLinear("(p + 1)/q"));
+                checkEditor(e);
+            }
+        }
+        // It lays out, and every stop has a place a click can find again.
+        const MathLayout layout = layoutMath(e.root(), kSimpleMetrics);
+        for (const MathCaret& stop : mathStops(e.root())) {
+            REQUIRE(layout.box(stop.node));
+            const MathCaretGeometry g = layout.caretGeometry(stop);
+            REQUIRE(g.top < g.bottom);
+            const MathCaret clicked = layout.caretAt(e.root(), g.x, (g.top + g.bottom) / 2);
+            REQUIRE(findMathNode(e.root(), clicked.node));
+            layout.vertical(e.root(), stop, true);
+            layout.vertical(e.root(), stop, false);
+        }
+
+        // Whatever it ended as, it lowers or reports an error on a node of its own.
+        try {
+            lowerMath(e.root());
+        } catch (const Error& err) {
+            REQUIRE(findMathNode(e.root(), err.node()));
+        }
+    }
 }

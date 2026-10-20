@@ -6,19 +6,42 @@
 #include "PdfExport.h"
 #include "WorksheetCanvas.h"
 
+#include <QClipboard>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QScrollBar>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
 
 namespace {
 
+// A text region's text, or a plot's traces.
 QString source(const lemma::Region& r)
 {
     return QString::fromStdString(r.source);
+}
+
+// A math region as linear text, with ■ for placeholders.
+QString linear(const lemma::Region& r)
+{
+    return QString::fromStdString(lemma::toLinear(r.math));
+}
+
+// The first Number or Identifier with this text.
+const lemma::MathNode* leaf(const lemma::MathNode& n, const std::string& text)
+{
+    if (n.isLeaf() && n.text == text) {
+        return &n;
+    }
+    for (const lemma::MathNode& c : n.children) {
+        if (const lemma::MathNode* found = leaf(c, text)) {
+            return found;
+        }
+    }
+    return nullptr;
 }
 
 QString value(const lemma::Region& r)
@@ -45,56 +68,61 @@ private slots:
     void typingAtTheCrosshairCreatesARegion()
     {
         click({72, 480});
-        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
+        QTest::keyClicks(canvas_.get(), "w:2kN/m");
 
         const auto& regions = sheet().regions();
         QCOMPARE(regions.size(), 1u);
-        QCOMPARE(source(regions[0]), QStringLiteral("w:= 2 kN/m")); // ':' expands to ':='
+        QCOMPARE(linear(regions[0]), QStringLiteral("w := 2 kN/m")); // ':' defines; a fraction of 2 kN over m
+        QCOMPARE(regions[0].math.children[1].kind, lemma::MathNode::Kind::Fraction);
         QCOMPARE(regions[0].x, 72.0);
         QCOMPARE(regions[0].y, 480.0);
+
+        // A key that does nothing on its own leaves no region behind.
+        click({72, 600});
+        QTest::keyClicks(canvas_.get(), ")");
+        QCOMPARE(sheet().regions().size(), 1u);
     }
 
     void enterMovesBelowAndResultsUpdateLive()
     {
         click({72, 480});
-        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
+        QTest::keyClicks(canvas_.get(), "w:2kN/m");
         QTest::keyClick(canvas_.get(), Qt::Key_Return);
-        QTest::keyClicks(canvas_.get(), "w*3 m = kN");
+        QTest::keyClicks(canvas_.get(), "w*3m=kN");
 
         const auto& regions = sheet().regions();
         QCOMPARE(regions.size(), 2u);
-        QVERIFY(regions[1].y > regions[0].y);
+        QVERIFY(regions[1].y > canvas_->regionRect(regions[0]).bottom()); // below the fraction, too
         QCOMPARE(regions[1].x, regions[0].x);
         QCOMPARE(value(regions[1]), QStringLiteral("6 kN"));
 
         // Editing the definition above recalculates the result below it.
-        click(regionPoint(regions[0], 5)); // just after "w:= 2"
+        const lemma::MathNode& two = *leaf(regions[0].math, "2");
+        click(canvas_->mathCaretPosition(regions[0], {two.id, 1}));
         QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
         QTest::keyClicks(canvas_.get(), "5");
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 5 kN/m"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("w := 5 kN/m"));
         QCOMPARE(value(sheet().regions()[1]), QStringLiteral("15 kN"));
     }
 
-    void definitionsDisplayWithSpacingAroundAssign()
+    void clickingPlacesTheCaretInTheTree()
     {
-        click({72, 480});
-        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
-        QTest::keyClick(canvas_.get(), Qt::Key_Return);
-        QTest::keyClicks(canvas_.get(), "v:3 m");
-        QTest::keyClick(canvas_.get(), Qt::Key_Return);
+        const int id = sheet().addRegion(72, 120, "v := 3/4 m");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(id);
 
-        // Only the display is normalized; the source keeps the spacing as typed.
-        const auto& regions = sheet().regions();
-        QCOMPARE(regions.size(), 2u);
-        QCOMPARE(source(regions[0]), QStringLiteral("w:= 2 kN/m"));
-        QCOMPARE(source(regions[1]), QStringLiteral("v:=3 m"));
-        QCOMPARE(QString::fromStdString(regions[0].result.display), QStringLiteral("w := 2 kN/m"));
-        QCOMPARE(QString::fromStdString(regions[1].result.display), QStringLiteral("v := 3 m"));
-
-        // Clicking places the caret by source position, unaffected by the display spacing.
-        click(regionPoint(sheet().regions()[1], 4)); // just after "v:=3"
+        // In the denominator, after the 4.
+        click(canvas_->mathCaretPosition(r, {leaf(r.math, "4")->id, 1}));
         QTest::keyClicks(canvas_.get(), "0");
-        QCOMPARE(source(sheet().regions()[1]), QStringLiteral("v:=30 m"));
+        QCOMPARE(linear(*sheet().region(id)), QStringLiteral("v := 3/40 m"));
+
+        // Up goes to the numerator; Down comes back.
+        QTest::keyClick(canvas_.get(), Qt::Key_Up);
+        QTest::keyClicks(canvas_.get(), "1");
+        QCOMPARE(linear(*sheet().region(id)), QStringLiteral("v := 31/40 m"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Down);
+        QTest::keyClicks(canvas_.get(), "2");
+        QCOMPARE(linear(*sheet().region(id)), QStringLiteral("v := 31/402 m"));
     }
 
     void caretMovementAndDeletion()
@@ -103,18 +131,145 @@ private slots:
         QTest::keyClicks(canvas_.get(), "12");
         QTest::keyClick(canvas_.get(), Qt::Key_Left);
         QTest::keyClicks(canvas_.get(), "3");
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("132"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("132"));
 
         QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("12"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("12"));
 
         QTest::keyClick(canvas_.get(), Qt::Key_Home);
         QTest::keyClick(canvas_.get(), Qt::Key_Delete);
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("2"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("2"));
 
         QTest::keyClick(canvas_.get(), Qt::Key_End);
         QTest::keyClicks(canvas_.get(), "0");
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("20"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("20"));
+    }
+
+    void spaceGrowsTheSelectionAndOperatorsWrapIt()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "a+b");
+        QTest::keyClick(canvas_.get(), Qt::Key_Space);
+        QVERIFY(canvas_->mathCaret()->selected);
+        QTest::keyClick(canvas_.get(), Qt::Key_Space);
+        QTest::keyClicks(canvas_.get(), "*c");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("(a + b)*c"));
+
+        // Shift+Space goes back down; Insert flips the bar's side.
+        QTest::keyClick(canvas_.get(), Qt::Key_Space);
+        QTest::keyClick(canvas_.get(), Qt::Key_Space);
+        QTest::keyClick(canvas_.get(), Qt::Key_Space, Qt::ShiftModifier);
+        const lemma::MathCaret c = *canvas_->mathCaret();
+        QVERIFY(c.selected);
+        QCOMPARE(c.node, leaf(sheet().regions()[0].math, "c")->id);
+        QTest::keyClick(canvas_.get(), Qt::Key_Insert);
+        QCOMPARE(canvas_->mathCaret()->side, lemma::MathCaret::Side::Left);
+    }
+
+    void draggingAcrossMathBeingEditedSelectsASubtree()
+    {
+        const int id = sheet().addRegion(72, 120, "a + b*c");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(id);
+        const lemma::MathNode& b = *leaf(r.math, "b");
+        const lemma::MathNode& c = *leaf(r.math, "c");
+        click(canvas_->mathCaretPosition(r, {b.id, 0})); // editing it now
+
+        drag(canvas_->mathCaretPosition(r, {b.id, 0}), canvas_->mathCaretPosition(r, {c.id, 1}));
+        const lemma::MathCaret selected = *canvas_->mathCaret();
+        QVERIFY(selected.selected);
+        QCOMPARE(selected.node, r.math.children[1].id); // b·c
+        QCOMPARE(selected.side, lemma::MathCaret::Side::Right);
+        QCOMPARE(sheet().region(id)->x, 72.0); // selected, not moved
+
+        QTest::keyClicks(canvas_.get(), "x");
+        QCOMPARE(linear(*sheet().region(id)), QStringLiteral("a + x"));
+
+        // A double click selects the leaf under the pointer.
+        const lemma::MathNode& a = *leaf(sheet().region(id)->math, "a");
+        const QPoint at = canvas_->viewportPosition(canvas_->mathCaretPosition(*sheet().region(id), {a.id, 1})).toPoint();
+        QTest::mouseDClick(canvas_->viewport(), Qt::LeftButton, {}, at);
+        QCOMPARE(canvas_->mathCaret()->node, a.id);
+        QVERIFY(canvas_->mathCaret()->selected);
+    }
+
+    void tabMovesBetweenMathPlaceholders()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "f(a,,");
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab);
+        QVERIFY(canvas_->hasFocus());
+        QTest::keyClicks(canvas_.get(), "2");
+        QTest::keyClick(canvas_.get(), Qt::Key_Tab);
+        QTest::keyClicks(canvas_.get(), "3");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("f(a, 2, 3)"));
+    }
+
+    void errorsPointAtTheNodeAndShowBelow()
+    {
+        const int id = sheet().addRegion(72, 120, "1 m + q =");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(id);
+        QCOMPARE(QString::fromStdString(r.result.error), QStringLiteral("q is not defined"));
+        QCOMPARE(r.result.errorNode, leaf(r.math, "q")->id);
+        QVERIFY(canvas_->regionRect(r).bottom() > r.y + canvas_->mathLayout(r).descent + 8);
+    }
+
+    void anUnfilledPlaceholderIsntAnErrorUntilEditingEnds()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "a+");
+        const lemma::Region& r = sheet().regions()[0];
+        QCOMPARE(QString::fromStdString(r.result.error), QStringLiteral("Fill in the placeholder"));
+        const double editing = canvas_->regionRect(r).height();
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QVERIFY(canvas_->regionRect(sheet().regions()[0]).height() > editing); // the message shows now
+    }
+
+    void evaluationsShowTheirUnitPlaceholderWhileEdited()
+    {
+        const int id = sheet().addRegion(72, 120, "2 m + 3 m =");
+        canvas_->worksheetReset();
+        const auto placeholders = [&] {
+            const auto& items = canvas_->mathLayout(*sheet().region(id)).items;
+            return std::count_if(items.begin(), items.end(), [](const lemma::MathLayoutItem& item) {
+                return item.kind == lemma::MathLayoutItem::Kind::Placeholder;
+            });
+        };
+        QCOMPARE(placeholders(), 0);
+        click(regionPoint(*sheet().region(id), 1));
+        QCOMPARE(placeholders(), 1);
+        QTest::keyClick(canvas_.get(), Qt::Key_End);
+        QTest::keyClicks(canvas_.get(), "mm");
+        QCOMPARE(value(*sheet().region(id)), QStringLiteral("5×10³ mm"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QCOMPARE(placeholders(), 0);
+    }
+
+    void copyAndPasteUseLinearText()
+    {
+        const int id = sheet().addRegion(72, 120, "x := 2 m");
+        canvas_->worksheetReset();
+        click(regionPoint(*sheet().region(id), 1));
+        QTest::keyClick(canvas_.get(), Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("x := 2 m"));
+
+        // Pasting at the crosshair starts a region; the text is parsed, not typed.
+        QGuiApplication::clipboard()->setText(QStringLiteral("x^2+1 m^2 ="));
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        click({72, 480});
+        QTest::keyClick(canvas_.get(), Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(sheet().regions().size(), 2u);
+        QCOMPARE(linear(sheet().regions()[1]), QStringLiteral("x^2 + 1 m^2 ="));
+        QCOMPARE(value(sheet().regions()[1]), QStringLiteral("5 m²"));
+
+        // Text that isn't math says why.
+        QSignalSpy messages(canvas_.get(), &WorksheetCanvas::message);
+        QGuiApplication::clipboard()->setText(QStringLiteral("2 +"));
+        QTest::keyClick(canvas_.get(), Qt::Key_End);
+        QTest::keyClick(canvas_.get(), Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(messages.count(), 1);
+        QCOMPARE(linear(sheet().regions()[1]), QStringLiteral("x^2 + 1 m^2 ="));
     }
 
     void emptiedRegionIsRemovedWhenEditingEnds()
@@ -239,27 +394,33 @@ private slots:
     void typingUndoesAsOneStep()
     {
         click({72, 480});
-        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
-        QCOMPARE(undo()->count(), 1); // the region and everything typed into it
+        QTest::keyClicks(canvas_.get(), "width");
+        QCOMPARE(undo()->count(), 1); // the region and everything typed into the name
 
         undo()->undo();
         QVERIFY(sheet().regions().empty());
         undo()->redo();
         QCOMPARE(sheet().regions().size(), 1u);
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/m"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width"));
 
-        // Redo leaves the caret at the end, and new typing is a step of its own.
-        QTest::keyClicks(canvas_.get(), "m");
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/mm"));
-        QCOMPARE(undo()->count(), 2);
+        // Redo leaves the caret at the end. Structure, like ":", is a step of its own.
+        QTest::keyClicks(canvas_.get(), ":");
+        QTest::keyClicks(canvas_.get(), "25");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width := 25"));
+        QCOMPARE(undo()->count(), 3);
+        undo()->undo();
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width := ■"));
+
+        // Undo puts the caret back, so typing carries on where it was.
+        QTest::keyClicks(canvas_.get(), "3");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width := 3"));
 
         // Moving the caret starts a new step too.
         QTest::keyClick(canvas_.get(), Qt::Key_Home);
         QTest::keyClicks(canvas_.get(), "q");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("qwidth := 3"));
         undo()->undo();
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/mm"));
-        undo()->undo();
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("w:= 2 kN/m"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width := 3"));
     }
 
     void erasingUndoesAsOneStep()
@@ -267,15 +428,15 @@ private slots:
         const int a = sheet().addRegion(72, 120, "x := 125");
         canvas_->worksheetReset();
 
-        click(regionPoint(*sheet().region(a), 8));
+        click(regionPoint(*sheet().region(a), 99)); // the last stop, after "125"
         QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
         QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
-        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 1"));
+        QCOMPARE(linear(*sheet().region(a)), QStringLiteral("x := 1"));
 
         undo()->undo();
-        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 125"));
+        QCOMPARE(linear(*sheet().region(a)), QStringLiteral("x := 125"));
         undo()->redo();
-        QCOMPARE(source(*sheet().region(a)), QStringLiteral("x := 1"));
+        QCOMPARE(linear(*sheet().region(a)), QStringLiteral("x := 1"));
     }
 
     void undoBringsBackAnEmptiedRegion()
@@ -292,7 +453,7 @@ private slots:
         // Erasing and the removal it caused are one step.
         QCOMPARE(undo()->count(), 1);
         undo()->undo();
-        QCOMPARE(source(*sheet().region(a)), QStringLiteral("ab"));
+        QCOMPARE(linear(*sheet().region(a)), QStringLiteral("ab"));
     }
 
     void deletingRegionsUndoes()
@@ -396,7 +557,7 @@ private slots:
         QTest::keyClick(canvas_.get(), Qt::Key_Return); // a new line, not the end of the region
         QTest::keyClicks(canvas_.get(), "then x = 5");
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
-        QTest::keyClicks(canvas_.get(), "x =");
+        QTest::keyClicks(canvas_.get(), "x=");
 
         const auto& regions = sheet().regions();
         QCOMPARE(regions.size(), 2u);
@@ -412,7 +573,8 @@ private slots:
         QVERIFY(regions[1].y > canvas_->regionRect(regions[0]).bottom());
         QCOMPARE(QString::fromStdString(regions[1].result.error), QStringLiteral("x is not defined"));
 
-        // The text region and everything typed into it is one undo step.
+        // The text region and everything typed into it is one undo step; "x=" is two.
+        undo()->undo();
         undo()->undo();
         undo()->undo();
         QVERIFY(sheet().regions().empty());
@@ -430,13 +592,13 @@ private slots:
         // Undo while it is still empty takes it away too, rather than leaving it behind.
         sheet().addRegion(72, 240, "a := 1");
         canvas_->worksheetReset();
-        click(regionPoint(sheet().regions()[0], 6));
+        click(regionPoint(sheet().regions()[0], 99));
         QTest::keyClicks(canvas_.get(), "0");
         click({72, 480});
         QTest::keyClicks(canvas_.get(), "\"");
         undo()->undo();
         QCOMPARE(sheet().regions().size(), 1u);
-        QCOMPARE(source(sheet().regions()[0]), QStringLiteral("a := 1"));
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("a := 1"));
     }
 
     void textWrapsAndCaretMovesByLine()
@@ -532,14 +694,17 @@ private slots:
 
         // The plot follows the definitions above it.
         const int plotId = plot.id;
-        click(regionPoint(sheet().regions()[0], 11)); // just after "f(x) := 2 x"
+        const lemma::Region& def = sheet().regions()[0];
+        const lemma::MathNode& x = def.math.children[1].children[0].children[1]; // the x of "2 x"
+        click(canvas_->mathCaretPosition(def, {x.id, 1}));
         QTest::keyClicks(canvas_.get(), "^2");
         QCOMPARE(sheet().region(plotId)->result.plot.traces[0].segments[0].back().y, 203.0);
 
         // Inserting it and typing into it are separate steps.
-        undo()->undo();
-        undo()->undo();
-        undo()->undo();
+        undo()->undo(); // the 2
+        undo()->undo(); // the ^
+        undo()->undo(); // the region typed at the crosshair
+        undo()->undo(); // the plot's f
         QCOMPARE(source(*sheet().region(plotId)), QString());
         undo()->undo();
         QVERIFY(!sheet().region(plotId));
@@ -659,7 +824,7 @@ private slots:
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-        QCOMPARE(root.value("version").toInt(), 3); // version 2 would silently drop plots
+        QCOMPARE(root.value("version").toInt(), 4); // math regions store their tree
 
         lemma::Worksheet loaded;
         QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
@@ -703,20 +868,36 @@ private slots:
         QCOMPARE(loaded.regions()[1].kind, lemma::Region::Kind::Math);
     }
 
-    void loadsVersion1Files()
+    void refusesOlderPreReleaseFiles()
     {
         QTemporaryDir dir;
-        QFile f(dir.filePath("v1.lemma"));
+        QFile f(dir.filePath("v3.lemma"));
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(R"({"format": "lemma-worksheet", "version": 1,
+        f.write(R"({"format": "lemma-worksheet", "version": 3,
                     "regions": [{"type": "math", "x": 72, "y": 96, "source": "2 m + 1 m ="}]})");
         f.close();
 
         lemma::Worksheet ws;
+        ws.addRegion(0, 0, "a := 1");
         QString error;
-        QVERIFY2(DocumentIO::load(ws, f.fileName(), &error), qPrintable(error));
-        QCOMPARE(ws.regions().size(), 1u);
-        QCOMPARE(value(ws.regions()[0]), QStringLiteral("3 m"));
+        QVERIFY(!DocumentIO::load(ws, f.fileName(), &error));
+        QVERIFY(error.contains("older pre-release"));
+        QCOMPARE(ws.regions().size(), 1u); // left as it was
+    }
+
+    void refusesDamagedTrees()
+    {
+        QTemporaryDir dir;
+        QFile f(dir.filePath("bad.lemma"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(R"({"format": "lemma-worksheet", "version": 4, "regions": [{"type": "math", "x": 72, "y": 96,
+                    "math": {"kind": "add", "lhs": {"kind": "number", "text": "1"}}}]})");
+        f.close();
+
+        lemma::Worksheet ws;
+        QString error;
+        QVERIFY(!DocumentIO::load(ws, f.fileName(), &error));
+        QVERIFY(error.contains("damaged"));
     }
 
     void saveAndLoadRoundTrip()
@@ -724,18 +905,30 @@ private slots:
         sheet().addRegion(72, 96, "L := 2.5 m");
         sheet().addRegion(288, 96, "δ := L / 240");
         sheet().addRegion(72, 144, "δ = mm");
+        // Placeholders, groups and operator placeholders save too: the tree is the format.
+        click({72, 240});
+        QTest::keyClicks(canvas_.get(), "(a+b)*sqrt(");
+        QTest::keyClick(canvas_.get(), Qt::Key_Left);
+        QTest::keyClick(canvas_.get(), Qt::Key_Left);
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         sheet().evaluate();
 
         QTemporaryDir dir;
         const QString path = dir.filePath("round-trip.lemma");
         QString error;
         QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject saved = QJsonDocument::fromJson(file.readAll()).object();
+        const QJsonObject delta = saved.value("regions").toArray()[1].toObject().value("math").toObject();
+        QCOMPARE(delta.value("kind").toString(), QStringLiteral("definition"));
+        QCOMPARE(delta.value("rhs").toObject().value("kind").toString(), QStringLiteral("fraction"));
 
         lemma::Worksheet loaded;
         QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
-        QCOMPARE(loaded.regions().size(), 3u);
-        for (std::size_t i = 0; i < 3; ++i) {
-            QCOMPARE(source(loaded.regions()[i]), source(sheet().regions()[i]));
+        QCOMPARE(loaded.regions().size(), 4u);
+        for (std::size_t i = 0; i < 4; ++i) {
+            QVERIFY(loaded.regions()[i].math.sameAs(sheet().regions()[i].math));
             QCOMPARE(loaded.regions()[i].x, sheet().regions()[i].x);
             QCOMPARE(loaded.regions()[i].y, sheet().regions()[i].y);
         }
@@ -798,13 +991,13 @@ private slots:
         QTest::keyClicks(canvas_.get(), "\"Deflection under a uniform load, from the beam tables. "
                                         "Check it against L/240.");
         click({72, 480});
-        QTest::keyClicks(canvas_.get(), "w: 2 kN/m");
-        QTest::keyClick(canvas_.get(), Qt::Key_Return);
-        QTest::keyClicks(canvas_.get(), "w L^4 / (8 E I) = mm");
-        QTest::keyClick(canvas_.get(), Qt::Key_Return);
-        QTest::keyClicks(canvas_.get(), "w L + 1 kg =");
+        keys("w:2kN/m{return}");
+        keys("w*L^4{right}{space}{space}/8*E*I=mm{return}");
+        keys("w*L+1kg=");
+        click({480, 480});
+        keys("r:\\b^2{right}+h^2{return}r=mm");
         click({72, 624});
-        QTest::keyClicks(canvas_.get(), "f(x): x^2 / 20 - 2");
+        keys("f(x):x^2{right}/20{right}-2");
         click({120, 696});
         QTest::keyClicks(canvas_.get(), "@f, sin");
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
@@ -812,11 +1005,36 @@ private slots:
 
         QVERIFY(canvas_->grab().save(dir + "/canvas.png"));
         QVERIFY(exportPdf(*canvas_, dir + "/canvas.pdf", "snapshot"));
+
+        // While editing: a selection's underline, a placeholder, and an evaluation's unit slot.
+        click({480, 624});
+        keys("q:a+b{space}{space}/c^");
+        click({480, 720});
+        keys("x+y{space}");
+        QVERIFY(canvas_->grab().save(dir + "/editing.png"));
     }
 
 private:
     lemma::Worksheet& sheet() { return canvas_->worksheet(); }
     QUndoStack* undo() { return canvas_->undoStack(); }
+
+    // Types into the canvas; {name} presses a key.
+    void keys(const QString& input)
+    {
+        static const QHash<QString, Qt::Key> named = {
+            {"right", Qt::Key_Right}, {"left", Qt::Key_Left}, {"space", Qt::Key_Space},
+            {"return", Qt::Key_Return}, {"tab", Qt::Key_Tab},
+        };
+        for (qsizetype i = 0; i < input.size(); ++i) {
+            if (input[i] == '{') {
+                const qsizetype close = input.indexOf('}', i);
+                QTest::keyClick(canvas_.get(), named.value(input.mid(i + 1, close - i - 1)));
+                i = close;
+            } else {
+                QTest::keyClicks(canvas_.get(), input.mid(i, 1));
+            }
+        }
+    }
 
     void click(QPointF docPos)
     {

@@ -328,6 +328,16 @@ MathEditor::Change MathEditor::typeOperator(char op)
     Side side = caret_.side;
     if (!caret_.selected) {
         MathNode* n = findMathNode(root_, caret_.node);
+        int nameIndex = 0;
+        const MathNode* owner = parentOf(root_, n->id, &nameIndex);
+        if (owner && owner->kind == Kind::Call && nameIndex == 0 && (n->kind == Kind::Placeholder || caret_.offset > 0)) {
+            return Change::None; // a function's name can't take an operator, except before it
+        }
+        if (owner && owner->kind == Kind::Call && nameIndex == 0) {
+            n = findMathNode(root_, owner->id); // before the name is before the whole call
+            target = n->id;
+            caret_ = {n->id, 0, Side::Left, false};
+        }
         if (n->kind == Kind::Placeholder) {
             if (op == '-') {
                 MathNode inner;
