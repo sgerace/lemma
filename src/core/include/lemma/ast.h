@@ -14,12 +14,14 @@ struct Node {
     enum class Kind { Number, Identifier, Unary, Binary, Call };
 
     Kind kind = Kind::Number;
-    std::size_t begin = 0; // byte range in the source
+    std::size_t begin = 0; // byte range in the source, for parsed text
     std::size_t end = 0;
+    int origin = 0;        // the MathNode this was lowered from, or 0 for parsed text
 
     double number = 0.0;       // Number
     std::string name;          // Identifier, Call
     char op = 0;               // Unary: '-'; Binary: '+', '-', '*', '/', '^'
+    bool juxtaposed = false;   // Binary '*' written without an operator: "10 N"
     std::vector<NodePtr> args; // Unary: operand; Binary: lhs, rhs; Call: arguments
 };
 

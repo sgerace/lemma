@@ -171,9 +171,9 @@ linear typing, and it is Mathcad's behavior:
 |---|---|---|
 | `x ^ 2 + 1` | `x^[2 + 1|]` | `+` doesn't climb out of the exponent |
 | `x ^ 2 →  + 1` | `x^[2] + 1|` | Right arrow leaves the exponent (6.1) |
-| `x ^ 2 Space + 1` | `x^[2] + 1|` | Space selects `x²`; `+` wraps it |
+| `x ^ 2 Space Space + 1` | `x^[2] + 1|` | Space selects `2`, then `x²`; `+` wraps it |
 | `a / b * c` | `[a / b·c|]` | `*` stays in the denominator |
-| `a / b Space * c` | `[a / b]·c|` | |
+| `a / b Space Space * c` | `[a / b]·c|` | |
 
 Overriding precedence with a selection:
 

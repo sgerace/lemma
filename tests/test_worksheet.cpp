@@ -5,6 +5,7 @@
 
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 using namespace lemma;
 
@@ -56,16 +57,66 @@ TEST_CASE("Definitions carry units through calculations")
 {
     const Worksheet ws = sheet({"L := 2 m", "F := 10 N", "L·F ="});
     CHECK(last(ws).value == "20 J");
-    CHECK(last(ws).display == "L·F = 20 J");
 }
 
-TEST_CASE("Definitions display with one space around :=")
+TEST_CASE("Results give their number and unit separately, for typesetting")
 {
-    CHECK(last(sheet({"w:= 2 kN/m"})).display == "w := 2 kN/m");
-    CHECK(last(sheet({"w:=2 kN/m"})).display == "w := 2 kN/m");
-    CHECK(last(sheet({"w  :=   2 kN/m"})).display == "w := 2 kN/m");
-    CHECK(last(sheet({"w := (1 + 2) kN/m"})).display == "w := (1 + 2) kN/m");
-    CHECK(last(sheet({"f(x, y):=x y"})).display == "f(x, y) := x y");
+    const Worksheet ws = sheet({"L := 2 m", "F := 10 N", "L·F ="});
+    CHECK(last(ws).number == "20");
+    REQUIRE(last(ws).unit.has_value());
+    CHECK(toLinear(*last(ws).unit) == "J");
+
+    const Worksheet accel = sheet({"a := 9.81 m/s^2", "a ="});
+    const RegionResult& base = last(accel);
+    CHECK(base.number == "9.81");
+    CHECK(toLinear(*base.unit) == "m/s^2");
+    CHECK(toLinear(*last(sheet({"x := 2 m^(1/2) kg", "x ="})).unit) == "kg*m^(1/2)");
+
+    // A chosen unit is the region's own unit slot, so the result has none of its own.
+    const Worksheet feet = sheet({"10 ft = m"});
+    const RegionResult& chosen = last(feet);
+    CHECK(chosen.number == "3.048");
+    CHECK(!chosen.unit.has_value());
+    CHECK(!last(sheet({"2 + 3 ="})).unit.has_value());
+}
+
+TEST_CASE("Identifiers that meant units are reported, to show them upright")
+{
+    Worksheet ws;
+    const int id = ws.addRegion(0, 0, "m := 5 kg");
+    ws.addRegion(0, 20, "x := 2 m");
+    ws.evaluate();
+    const MathNode& def = ws.region(id)->math;
+    const int kg = def.children[1].children[1].id;
+    CHECK(ws.region(id)->result.units == std::vector<int>{kg});
+    CHECK(ws.regions()[1].result.units.empty()); // m is the variable here, not metres
+}
+
+TEST_CASE("Errors in math regions name the node they are about")
+{
+    Worksheet ws;
+    const int mismatch = ws.addRegion(0, 0, "1 m + 1 kg =");
+    const int undefined = ws.addRegion(0, 20, "q + 1 =");
+    MathNode definition(MathNode::Kind::Definition, {MathNode::identifier("x"), MathNode()});
+    const int hole = definition.children[1].id;
+    const int incomplete = ws.addRegion(0, 40, std::move(definition));
+    ws.evaluate();
+
+    const Region& m = *ws.region(mismatch);
+    CHECK(m.result.errorNode == m.math.children[0].id); // the sum
+    const Region& u = *ws.region(undefined);
+    CHECK(u.result.error == "q is not defined");
+    CHECK(u.result.errorNode == u.math.children[0].children[0].id);
+    CHECK(ws.region(incomplete)->result.error == "Fill in the placeholder");
+    CHECK(ws.region(incomplete)->result.errorNode == hole);
+}
+
+TEST_CASE("An empty math region is just empty")
+{
+    Worksheet ws;
+    const int id = ws.addRegion(0, 0);
+    ws.evaluate();
+    CHECK(ws.region(id)->result.status == RegionResult::Status::Empty);
 }
 
 TEST_CASE("Results can be shown in a chosen unit")
@@ -197,7 +248,6 @@ TEST_CASE("Text regions take no part in evaluation")
     ws.evaluate();
 
     CHECK(ws.region(note)->result.status == RegionResult::Status::Empty);
-    CHECK(ws.region(note)->result.display.empty());
     CHECK(ws.regions().back().result.value == "2");
 }
 

@@ -60,7 +60,7 @@ std::optional<Quantity> constant(std::string_view name)
 Quantity checked(Quantity q, const Node& node)
 {
     if (!std::isfinite(q.value)) {
-        throw Error("The result is not a finite number", node.begin, node.end);
+        throw Error("The result is not a finite number", node.begin, node.end, node.origin);
     }
     return q;
 }
@@ -69,14 +69,14 @@ Quantity power(const Quantity& base, const Quantity& exponent, const Node& node)
 {
     if (!exponent.dim.isDimensionless()) {
         throw Error("An exponent can't have units (it has " + describeDimension(exponent.dim) + ")", node.begin,
-                    node.end);
+                    node.end, node.origin);
     }
     if (base.dim.isDimensionless()) {
         return checked({std::pow(base.value, exponent.value), {}}, node);
     }
     const auto rational = Rational::fromDouble(exponent.value);
     if (!rational) {
-        throw Error("A quantity with units can only be raised to a simple fraction", node.begin, node.end);
+        throw Error("A quantity with units can only be raised to a simple fraction", node.begin, node.end, node.origin);
     }
     return checked({std::pow(base.value, exponent.value), base.dim.pow(*rational)}, node);
 }
@@ -85,7 +85,7 @@ Quantity requireUnitless(const Quantity& q, const std::string& function, const N
 {
     if (!q.dim.isDimensionless()) {
         throw Error(function + " needs a unitless argument (it has " + describeDimension(q.dim) + ")", node.begin,
-                    node.end);
+                    node.end, node.origin);
     }
     return q;
 }
@@ -105,7 +105,7 @@ Quantity extremum(const std::vector<Quantity>& args, const Node& node, bool want
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (!(args[i].dim == best.dim)) {
             throw Error("Units don't match: " + describeDimension(best.dim) + " and " + describeDimension(args[i].dim),
-                        node.args[i]->begin, node.args[i]->end);
+                        node.args[i]->begin, node.args[i]->end, node.args[i]->origin);
         }
         if (wantMax ? args[i].value > best.value : args[i].value < best.value) {
             best = args[i];
@@ -141,7 +141,10 @@ const std::unordered_map<std::string, BuiltinEntry>& builtins()
 
 class Evaluator {
 public:
-    Evaluator(const Environment& env, Lookup lookup) : env_(env), lookup_(lookup) {}
+    Evaluator(const Environment& env, Lookup lookup, std::vector<int>* units = nullptr)
+        : env_(env), lookup_(lookup), units_(units)
+    {
+    }
 
     Quantity eval(const Node& node) const
     {
@@ -160,7 +163,7 @@ public:
         case Node::Kind::Call:
             return call(node);
         }
-        throw Error("Unknown expression", node.begin, node.end);
+        throw Error("Unknown expression", node.begin, node.end, node.origin);
     }
 
 private:
@@ -168,7 +171,7 @@ private:
     {
         const Unit* unit = UnitRegistry::instance().find(node.name);
         if (lookup_ == Lookup::UnitsFirst && unit) {
-            return unit->value;
+            return unitValue(*unit, node);
         }
         if (const Quantity* q = env_.variable(node.name)) {
             return *q;
@@ -177,13 +180,13 @@ private:
             return *c;
         }
         if (unit) {
-            return unit->value;
+            return unitValue(*unit, node);
         }
         if (env_.function(node.name) || builtins().contains(node.name)) {
             throw Error(node.name + " is a function; give it arguments, like " + node.name + "(x)",
-                        node.begin, node.end);
+                        node.begin, node.end, node.origin);
         }
-        throw Error(node.name + " is not defined", node.begin, node.end);
+        throw Error(node.name + " is not defined", node.begin, node.end, node.origin);
     }
 
     Quantity binary(const Node& node) const
@@ -195,20 +198,20 @@ private:
         case '-':
             if (!(a.dim == b.dim)) {
                 throw Error("Units don't match: " + describeDimension(a.dim) + " and " + describeDimension(b.dim),
-                            node.begin, node.end);
+                            node.begin, node.end, node.origin);
             }
             return {node.op == '+' ? a.value + b.value : a.value - b.value, a.dim};
         case '*':
             return checked({a.value * b.value, a.dim * b.dim}, node);
         case '/':
             if (b.value == 0.0) {
-                throw Error("Division by zero", node.args[1]->begin, node.args[1]->end);
+                throw Error("Division by zero", node.args[1]->begin, node.args[1]->end, node.args[1]->origin);
             }
             return checked({a.value / b.value, a.dim / b.dim}, node);
         case '^':
             return power(a, b, node);
         default:
-            throw Error("Unknown operator", node.begin, node.end);
+            throw Error("Unknown operator", node.begin, node.end, node.origin);
         }
     }
 
@@ -232,14 +235,14 @@ private:
                 return Evaluator(local, Lookup::VariablesFirst).eval(*fn->body);
             } catch (const Error& e) {
                 // The body's source positions belong to another region.
-                throw Error("In " + node.name + ": " + e.what(), node.begin, node.end);
+                throw Error("In " + node.name + ": " + e.what(), node.begin, node.end, node.origin);
             }
         }
 
         // "M (h/2)" on a value means multiplication, not a call.
         const auto multiply = [&](const Quantity& value) -> Quantity {
             if (args.size() != 1) {
-                throw Error(node.name + " is not a function", node.begin, node.end);
+                throw Error(node.name + " is not a function", node.begin, node.end, node.origin);
             }
             return checked({value.value * args[0].value, value.dim * args[0].dim}, node);
         };
@@ -258,23 +261,32 @@ private:
         return builtin.fn(args, node);
     }
 
+    Quantity unitValue(const Unit& unit, const Node& node) const
+    {
+        if (units_ && node.origin) {
+            units_->push_back(node.origin);
+        }
+        return unit.value;
+    }
+
     static Error arityError(const Node& node, int expected)
     {
         const std::string count = expected < 0 ? "at least one argument"
                                   : expected == 1 ? "1 argument"
                                                   : std::to_string(expected) + " arguments";
-        return Error(node.name + " takes " + count, node.begin, node.end);
+        return Error(node.name + " takes " + count, node.begin, node.end, node.origin);
     }
 
     const Environment& env_;
     Lookup lookup_;
+    std::vector<int>* units_;
 };
 
 } // namespace
 
-Quantity evaluate(const Node& node, const Environment& env, Lookup lookup)
+Quantity evaluate(const Node& node, const Environment& env, Lookup lookup, std::vector<int>* units)
 {
-    return Evaluator(env, lookup).eval(node);
+    return Evaluator(env, lookup, units).eval(node);
 }
 
 bool isBuiltinFunction(std::string_view name)
