@@ -632,3 +632,48 @@ TEST_CASE("integrate integrates (9.7)")
     CHECK(last(ws).note == "Couldn't integrate this");
     CHECK(lastError({"x -> integrate, x, 0"}) == "integrate needs a variable, and its limits if it has them: integrate, x, 0, L");
 }
+
+TEST_CASE("A symbolic definition defines its name as the result (7.1)")
+{
+    const std::initializer_list<std::string> beam = {
+        "P := 4 kN", "L := 2.5 m", "E := 200 GPa", "I := 4166666.667 mm^4",
+        "y(x) := P*x^2*(3*L - x)/(6*E*I)",
+        "θ(x) := y(x) -> diff, x; keep, P, L, E, I",
+    };
+    const auto with = [&](const std::string& last) {
+        std::vector<std::string> lines(beam);
+        lines.push_back(last);
+        Worksheet ws;
+        double y = 0;
+        for (const std::string& line : lines) {
+            ws.addRegion(0, y, line);
+            y += 20;
+        }
+        ws.evaluate();
+        return ws;
+    };
+    // Shown after the arrow, and evaluated numerically below: the slope at the tip.
+    const Worksheet ws = with("θ(L) =");
+    CHECK(ws.regions()[5].result.value == "P x*(2 L - x)/(2 E I)");
+    CHECK(ws.regions()[5].result.kind == Statement::Kind::FunctionDefinition);
+    CHECK(ws.regions()[6].result.value == "0.015");
+    // Used in another →, as if the result had been typed.
+    CHECK(with("θ(x) -> keep, P, L, E, I").regions().back().result.value == "P x*(2 L - x)/(2 E I)");
+    CHECK(with("θ(a) ->").regions().back().result.value == "0.002 a*(-a + 5 m)/m^2"); // units tidied: m⁻²
+
+    // A variable, evaluated where it's defined: w is known numerically.
+    CHECK(lastValue({"w := 2 kN/m", "L := 2.5 m", "M_max := w*L^2/8 -> keep, w", "M_max = kN*m"}) == "1.562 kN*m");
+    // Parameters are never substituted.
+    CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(2) ="}) == "12");
+    CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(t) ->"}) == "3 t^2");
+    // Full precision, not the 3 places shown.
+    CHECK(lastValue({"k := 1/3 -> simplify", "k*3 ="}) == "1");
+
+    // An operation beyond its scope: shown with its note, and no value to use.
+    const Worksheet open = sheet({"F(x) := exp(x^2) -> integrate, x", "F(1) ="});
+    CHECK(open.regions()[0].result.status == RegionResult::Status::Ok);
+    CHECK(open.regions()[0].result.note == "Couldn't integrate this");
+    CHECK(last(open).error == "F has no closed form");
+    CHECK(lastError({"s := x^2 - 1 -> solve, x"}) == "A definition needs one result, not an equation or solutions");
+    CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
+}

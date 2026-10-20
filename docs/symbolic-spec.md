@@ -1,7 +1,7 @@
 # Symbolic math: design
 
-Status: **agreed** (issue #16). Nothing here is implemented yet; section 13 is the
-plan. Change this note along with the engine.
+Status: **agreed and implemented** (issue #16), in the steps of section 13. Change this
+note along with the engine.
 
 Lemma evaluates numerically: every expression becomes a `Quantity`. This note adds
 Mathcad's symbolic evaluation operator, `→`, which returns an expression instead of
@@ -257,6 +257,14 @@ A definition's right-hand side may be a symbolic evaluation:
 - **Beyond scope.** When the operation couldn't finish (an integral left unevaluated),
   the definition still shows the result with its note, and using the name numerically
   is an error at the use: "θ has no closed form". Numeric integration comes later.
+- **One result.** A definition takes one expression: `solve`'s solutions, or an
+  equation, are an error on the definition.
+- **Precision.** The name is defined as the result to full precision, not to the
+  worksheet's three places shown: `k := 1/3 → simplify` then `k·3 =` is `1`. The
+  result's units are known, so later regions use them as units whatever is free.
+- **Numerically**, a function is defined as the result, evaluated at each call; a
+  variable is evaluated where it's defined, and if it has free names it has no number
+  ("M is not defined" where used), though symbolic regions below can still use it.
 - **Variables** work the same way: `M_max := w L²/8 → keep, w` defines `M_max` as
   the expression, which evaluates numerically wherever `w` is defined.
 - Errors in the symbolic step are reported on the definition, and later uses of the
@@ -286,6 +294,8 @@ A definition's right-hand side may be a symbolic evaluation:
   first term: `2 m + 3 mm` is `2.003 m`. The factor is exact when the units' sizes are
   (mm is 1/1000 m); otherwise it's a decimal. Either way the converted number shows
   as a decimal.
+- **Three or more units that partly cancel** in a product become SI units for what's
+  left, or its named unit: `kN/(GPa·mm⁴)` is `m⁻²` with a factor.
 - **Within a product**, units of one dimension become the first of them (`m·mm` is
   `0.001 m²`), and units whose product has the dimension of one of them become that
   one: with the cantilever's values, `P L³/(3 E I)` is
@@ -508,8 +518,9 @@ Each step lands with Catch2 tests; the editor and canvas steps also with GUI cas
 7. **Symbolic definitions** (7.1): `Symbolic` as a definition's right-hand side, its
    result defining the name, and plots of it.
 
-The worksheet demo (a beam derivation from load to deflection, then plotted) is
-possible after step 7.
+All seven steps are done. The worksheet demo, a cantilever's deflection from the beam
+tables with its slope, moment and tip deflection derived and plotted, is
+`examples/beam-derivation.lemma`.
 
 ## 14. Review
 

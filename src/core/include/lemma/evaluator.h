@@ -28,14 +28,19 @@ public:
 
     void define(const std::string& name, Quantity value);
     void defineFunction(const std::string& name, Function function);
+    // A name defined, but with no value to give: a symbolic definition whose operation
+    // couldn't finish. Using it is an error with `why`.
+    void defineUnavailable(const std::string& name, std::string why);
 
     const Quantity* variable(std::string_view name) const;
     const Function* function(std::string_view name) const;
+    const std::string* unavailable(std::string_view name) const;
 
 private:
     const Environment* parent_;
     std::unordered_map<std::string, Quantity> variables_;
     std::unordered_map<std::string, Function> functions_;
+    std::unordered_map<std::string, std::string> unavailable_;
 };
 
 enum class Lookup {

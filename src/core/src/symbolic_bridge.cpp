@@ -250,7 +250,8 @@ private:
     {
         const auto lowerBody = [&] {
             Scope inner{static_cast<std::size_t>(&d - o_.definitions.data()), params, scope.depth + 1, nullptr};
-            const std::unordered_set<int> units = unitPositions(*d.body, inner);
+            const std::unordered_set<int> units = d.units ? std::unordered_set<int>(d.units->begin(), d.units->end())
+                                                          : unitPositions(*d.body, inner);
             inner.units = &units;
             return lower(*d.body, inner);
         };

@@ -992,6 +992,46 @@ private slots:
         QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("6 m^2"));
     }
 
+    void ctrlPeriodInADefinitionDefinesTheResult()
+    {
+        click({72, 120});
+        keys("f(x):x^3{right}{symbolic}diff,x");
+        const lemma::Region& r = sheet().regions()[0];
+        QCOMPARE(linear(r), QStringLiteral("f(x) := x^3 -> diff, x"));
+        QCOMPARE(value(r), QStringLiteral("3 x^2"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Return);
+        keys("f(2)=");
+        QCOMPARE(value(sheet().regions()[1]), QStringLiteral("12"));
+
+        // Saved and loaded, it's still a symbolic definition.
+        QTemporaryDir dir;
+        const QString path = dir.filePath("definition.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        QVERIFY(loaded.regions()[0].math.sameAs(sheet().regions()[0].math));
+        QCOMPARE(value(loaded.regions()[1]), QStringLiteral("12"));
+    }
+
+    void theExamplesLoadAndCalculate()
+    {
+        QString error;
+        QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/beam-derivation.lemma"), &error),
+                 qPrintable(error));
+        QStringList values;
+        for (const lemma::Region& r : sheet().regions()) {
+            QVERIFY2(r.result.status != lemma::RegionResult::Status::Error, r.result.error.c_str());
+            values << value(r);
+        }
+        QVERIFY(values.contains(QStringLiteral("P x*(2 L - x)/(2 E I)"))); // the slope, derived
+        QVERIFY(values.contains(QStringLiteral("25 mm")));                 // the tip deflection
+        QVERIFY(values.contains(QStringLiteral("10 kN*m")));               // the moment at the support
+
+        QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/cantilever-beam.lemma"), &error),
+                 qPrintable(error));
+    }
+
     void anOperationBeyondItsScopeShowsANote()
     {
         const int plain = sheet().addRegion(72, 120, "x^2 -> diff, x");

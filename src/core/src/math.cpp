@@ -158,18 +158,20 @@ const MathNode* firstRequiredPlaceholder(const MathNode& root)
     if (root.kind == MathNode::Kind::Evaluation && root.children[1].kind == MathNode::Kind::Placeholder) {
         return firstPlaceholder(root.children[0]);
     }
-    if (root.kind == MathNode::Kind::Symbolic) {
-        for (const MathNode& child : root.children) {
-            if (&child != &root.children[0] && child.kind == MathNode::Kind::Placeholder) {
-                continue;
-            }
-            if (const MathNode* found = firstPlaceholder(child)) {
-                return found;
-            }
-        }
-        return nullptr;
+    if (root.kind == MathNode::Kind::Placeholder || (root.kind == MathNode::Kind::Binary && root.op == 0)) {
+        return &root;
     }
-    return firstPlaceholder(root);
+    for (std::size_t i = 0; i < root.children.size(); ++i) {
+        // A symbolic evaluation's keyword slots, here or as a definition's value, may be empty.
+        const MathNode& child = root.children[i];
+        if (root.kind == MathNode::Kind::Symbolic && i >= 1 && child.kind == MathNode::Kind::Placeholder) {
+            continue;
+        }
+        if (const MathNode* found = firstRequiredPlaceholder(child)) {
+            return found;
+        }
+    }
+    return nullptr;
 }
 
 bool isNameSlot(const MathNode& root, int id)
@@ -231,15 +233,45 @@ MathNode fromAst(const Node& n, std::string_view source)
 
 } // namespace
 
+namespace {
+
+// expr -> keywords, as a Symbolic node.
+MathNode symbolicFrom(MathNode expression, const Statement& s, std::string_view source)
+{
+    MathNode symbolic(MathNode::Kind::Symbolic, {std::move(expression)});
+    for (const Keyword& k : s.keywords) {
+        if (k.args.empty()) {
+            symbolic.children.push_back(MathNode::identifier(k.name));
+            continue;
+        }
+        MathNode keyword(MathNode::Kind::Keyword, {MathNode::identifier(k.name)});
+        for (const NodePtr& arg : k.args) {
+            keyword.children.push_back(fromAst(*arg, source));
+        }
+        symbolic.children.push_back(std::move(keyword));
+    }
+    if (s.keywords.empty()) {
+        symbolic.children.emplace_back(); // the keyword slot, empty
+    }
+    return symbolic;
+}
+
+} // namespace
+
 MathNode mathFromStatement(const Statement& s, std::string_view source)
 {
+    // A definition's value, as a symbolic evaluation when it is one.
+    const auto value = [&] {
+        MathNode rhs = fromAst(*s.expr, source);
+        return s.symbolic ? symbolicFrom(std::move(rhs), s, source) : rhs;
+    };
     switch (s.kind) {
     case Statement::Kind::Empty:
         return MathNode();
     case Statement::Kind::Expression:
         return fromAst(*s.expr, source);
     case Statement::Kind::Definition:
-        return MathNode(MathNode::Kind::Definition, {MathNode::identifier(s.name), fromAst(*s.expr, source)});
+        return MathNode(MathNode::Kind::Definition, {MathNode::identifier(s.name), value()});
     case Statement::Kind::FunctionDefinition: {
         MathNode lhs(MathNode::Kind::Call, {MathNode::identifier(s.name)});
         for (const std::string& param : s.params) {
@@ -248,29 +280,13 @@ MathNode mathFromStatement(const Statement& s, std::string_view source)
         if (s.params.empty()) {
             lhs.children.emplace_back(); // as for a call, f() is f(■)
         }
-        return MathNode(MathNode::Kind::Definition, {std::move(lhs), fromAst(*s.expr, source)});
+        return MathNode(MathNode::Kind::Definition, {std::move(lhs), value()});
     }
     case Statement::Kind::Evaluation:
         return MathNode(MathNode::Kind::Evaluation,
                         {fromAst(*s.expr, source), s.unit ? fromAst(*s.unit, source) : MathNode()});
-    case Statement::Kind::Symbolic: {
-        MathNode symbolic(MathNode::Kind::Symbolic, {fromAst(*s.expr, source)});
-        for (const Keyword& k : s.keywords) {
-            if (k.args.empty()) {
-                symbolic.children.push_back(MathNode::identifier(k.name));
-                continue;
-            }
-            MathNode keyword(MathNode::Kind::Keyword, {MathNode::identifier(k.name)});
-            for (const NodePtr& arg : k.args) {
-                keyword.children.push_back(fromAst(*arg, source));
-            }
-            symbolic.children.push_back(std::move(keyword));
-        }
-        if (s.keywords.empty()) {
-            symbolic.children.emplace_back(); // the keyword slot, empty
-        }
-        return symbolic;
-    }
+    case Statement::Kind::Symbolic:
+        return symbolicFrom(fromAst(*s.expr, source), s, source);
     }
     return MathNode();
 }

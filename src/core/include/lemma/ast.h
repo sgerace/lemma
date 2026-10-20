@@ -50,7 +50,8 @@ struct Statement {
     std::size_t equalsPos = 0;       // Evaluation: byte offset of '='
     std::size_t assignPos = 0;       // Definition, FunctionDefinition: byte offset of ':='
     std::string unitText;            // Evaluation: display unit as typed
-    std::vector<Keyword> keywords;   // Symbolic, in the order they apply
+    std::vector<Keyword> keywords;   // Symbolic, and a symbolic definition's, in the order they apply
+    bool symbolic = false;           // Definition, FunctionDefinition: defined as expr -> keywords
 };
 
 } // namespace lemma

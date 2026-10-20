@@ -93,14 +93,18 @@ struct Operation {
 // expression → result (docs/symbolic-spec.md). Names defined above are substituted,
 // except those `keep` lists. The operation keywords apply left to right; with none,
 // the expression is simplified. An equation's sides are each worked on.
+// With `parameters`, a function's, which stay names (7.1); `value` gets the single
+// result, for a symbolic definition, and `order` the names' display order.
 RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const SymbolicDefinition> definitions,
-                                    const FormatOptions& format)
+                                    const FormatOptions& format, const std::vector<std::string>& parameters = {},
+                                    std::optional<Expr>* value = nullptr, std::vector<std::string>* orderOut = nullptr)
 {
     RegionResult result;
     result.kind = Statement::Kind::Symbolic;
     try {
         LowerOptions lowering;
         lowering.definitions = definitions;
+        lowering.keep = parameters;
         std::vector<Operation> operations;
         for (std::size_t i = 1; i < math.children.size(); ++i) {
             const MathNode& k = math.children[i];
@@ -302,6 +306,12 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
         }
         result.value = toLinear(*result.symbolic);
         result.status = RegionResult::Status::Ok;
+        if (value && solvedFor.empty() && !equation && result.note.empty()) {
+            *value = combineUnits(sides[0], order);
+        }
+        if (orderOut) {
+            *orderOut = order;
+        }
     } catch (const Error& e) {
         result.status = RegionResult::Status::Error;
         result.error = e.what();
@@ -336,6 +346,62 @@ std::optional<SymbolicDefinition> symbolicDefinition(const MathNode& math)
         d.params.push_back(lhs.children[i].text);
     }
     return d;
+}
+
+// name := expression → result (7.1): the name is defined as the result, for numeric
+// evaluation (and plots) and for later symbolic evaluations.
+void evaluateSymbolicDefinition(Region& r, Environment& env, std::vector<SymbolicDefinition>& definitions,
+                                const FormatOptions& format)
+{
+    std::optional<SymbolicDefinition> d = symbolicDefinition(r.math);
+    const MathNode& symbolic = r.math.children[1];
+    if (!d) {
+        r.result = {};
+        r.result.status = RegionResult::Status::Error;
+        r.result.error = "Only a name or a function can be defined with :=";
+        r.result.errorNode = r.math.children[0].id;
+        return;
+    }
+    std::optional<Expr> value;
+    std::vector<std::string> order;
+    r.result = evaluateSymbolicRegion(symbolic, definitions, format, d->params, &value, &order);
+    r.result.kind = d->function ? Statement::Kind::FunctionDefinition : Statement::Kind::Definition;
+    if (r.result.status != RegionResult::Status::Ok) {
+        return; // used later, the name isn't defined
+    }
+    if (!r.result.note.empty()) {
+        env.defineUnavailable(d->name, d->name + " has no closed form");
+        return;
+    }
+    if (!value) {
+        r.result.status = RegionResult::Status::Error;
+        r.result.error = "A definition needs one result, not an equation or solutions";
+        r.result.errorNode = symbolic.id;
+        r.result.symbolic.reset();
+        r.result.value.clear();
+        return;
+    }
+
+    // To full precision, not the worksheet's: it's what later regions compute with.
+    ExprDisplayOptions precise;
+    precise.order = order;
+    precise.format.decimals = 15;
+    precise.format.exponentialThreshold = 20;
+    precise.upright = &r.result.definedUnits;
+    r.result.definedAs = mathFromExpr(*value, precise);
+    try {
+        const NodePtr body = lowerExpression(*r.result.definedAs);
+        if (d->function) {
+            env.defineFunction(d->name, {d->params, body, std::make_shared<Environment>(env)});
+        } else {
+            env.define(d->name, evaluate(*body, env));
+        }
+    } catch (const Error&) {
+        // A result with free names has no number; it's still defined symbolically.
+    }
+    d->body = &*r.result.definedAs;
+    d->units = &r.result.definedUnits;
+    definitions.push_back(std::move(*d));
 }
 
 RegionResult evaluateMathRegion(const MathNode& math, Environment& env, const FormatOptions& format)
@@ -498,6 +564,8 @@ void Worksheet::evaluate()
             r->result = evaluatePlotRegion(*r, env);
         } else if (r->math.kind == MathNode::Kind::Symbolic) {
             r->result = evaluateSymbolicRegion(r->math, definitions, format);
+        } else if (r->math.kind == MathNode::Kind::Definition && r->math.children[1].kind == MathNode::Kind::Symbolic) {
+            evaluateSymbolicDefinition(*r, env, definitions, format);
         } else {
             r->result = evaluateMathRegion(r->math, env, format);
             if (auto d = symbolicDefinition(r->math)) {

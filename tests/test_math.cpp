@@ -463,7 +463,8 @@ void checkTree(const MathNode& n, bool root, const MathNode* parent = nullptr, s
         expected = 2;
         break;
     case K::Symbolic:
-        REQUIRE(root);
+        // The region, or a definition's value (7.1).
+        REQUIRE((root || (parent->kind == K::Definition && index == 1)));
         REQUIRE(n.children.size() >= 2);
         for (std::size_t i = 1; i < n.children.size(); ++i) {
             const K k = n.children[i].kind;
@@ -586,7 +587,9 @@ TEST_CASE("Ctrl+. makes a symbolic evaluation, with the caret on the keyword (6.
     CHECK(typed("x^2{right}+1→") == "x^[2] + 1 → |■");
     CHECK(typed("a+b{left}→") == "a + b → |■"); // the whole region, wherever the caret is
     CHECK(typed("→") == "|■");                  // nothing to evaluate
-    CHECK(typed("x:→") == "x := |■");           // not a definition, for now
+    CHECK(typed("x:→") == "x := |■");           // nothing to evaluate yet
+    CHECK(typed("f(x):x^2{right}→diff,x") == "f(x) := x^[2] → diff, x|"); // a definition's value (7.1)
+    CHECK(typed("f(x):x^2{right}→{bs}") == "f(x) := x^[2]|");
     CHECK(typed("x→simplify") == "x → simplify|");
 }
 
@@ -631,6 +634,7 @@ TEST_CASE("Ctrl+= makes the whole slot an equation's left side (6.3)")
 TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
 {
     for (const char* source : {"x^2 - 1 ->", "x^2 - 5*x + 6 -> factor", "M == σ*I/c -> solve, σ",
+                               "θ(x) := y(x) -> diff, x", "M_max := w*L^2/8 -> keep, w",
                                "y -> keep, P, L; diff, x", "f(x) -> substitute, x == 2"}) {
         CHECK(toLinear(mathFromLinear(source)) == source);
     }
@@ -642,7 +646,7 @@ TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
     CHECK(s.keywords[0].args.size() == 1);
     CHECK(s.keywords[1].name == "simplify");
     CHECK_THROWS(mathFromLinear("x -> 2"));
-    CHECK_THROWS(mathFromLinear("x := 1 -> simplify"));
+    CHECK(mathFromLinear("x := 1 -> simplify").children[1].kind == MathNode::Kind::Symbolic);
 
     // An empty keyword copies as none; an equation pastes only as a whole slot.
     MathEditor e;

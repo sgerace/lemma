@@ -170,6 +170,7 @@ public:
             s.name = next().text;
             s.assignPos = next().begin;
             s.expr = expression();
+            symbolicDefinition(s);
         } else if (isFunctionDefinition()) {
             s.kind = Statement::Kind::FunctionDefinition;
             s.name = next().text;
@@ -182,6 +183,7 @@ public:
             expect(Token::Kind::RParen, "Expected ')'");
             s.assignPos = expect(Token::Kind::Assign, "Expected ':='").begin;
             s.expr = expression();
+            symbolicDefinition(s);
         } else {
             s.kind = Statement::Kind::Expression;
             s.expr = relation();
@@ -265,6 +267,15 @@ private:
         n->end = rhs->end;
         n->args = {std::move(lhs), std::move(rhs)};
         return n;
+    }
+
+    // A definition's value may be a symbolic evaluation: θ(x) := y(x) -> diff, x
+    void symbolicDefinition(Statement& s)
+    {
+        if (accept(Token::Kind::Arrow)) {
+            s.symbolic = true;
+            keywords(s);
+        }
     }
 
     // keywords := [keyword {';' keyword}]      keyword := name {',' relation}

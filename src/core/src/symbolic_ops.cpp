@@ -1,6 +1,7 @@
 #include "lemma/symbolic_ops.h"
 
 #include "lemma/error.h"
+#include "lemma/units.h"
 
 #include <algorithm>
 #include <cmath>
@@ -404,6 +405,24 @@ std::size_t firstAppearance(const Expr& units, const std::vector<std::string>& o
     return first;
 }
 
+// A dimension in units: its named unit (N, J, Pa), or SI base units (kg·m/s²).
+Expr siUnits(const Dimension& d)
+{
+    if (const Unit* unit = UnitRegistry::instance().preferredFor(d)) {
+        return Expr::unit(unit->name, unit->value.dim, unit->value.value);
+    }
+    static const char* const kBase[] = {"m", "kg", "s", "A", "K", "mol", "cd"};
+    std::vector<Expr> parts;
+    for (std::size_t b = 0; b < Dimension::kCount; ++b) {
+        const Rational e = d[static_cast<BaseDimension>(b)];
+        if (!e.isZero()) {
+            const Unit* unit = UnitRegistry::instance().find(kBase[b]);
+            parts.push_back(Expr::pow(Expr::unit(unit->name, unit->value.dim, unit->value.value), Expr(Number(e))));
+        }
+    }
+    return Expr::product(parts);
+}
+
 // The unit symbols in a product of units, in the order they appear.
 std::vector<Symbol> unitSymbols(const Expr& units, const std::vector<std::string>& order)
 {
@@ -444,6 +463,34 @@ Expr simplifyUnits(const Expr& term, const std::vector<std::string>& order)
                 target = Expr::symbol(s);
                 break;
             }
+        }
+    }
+    if (!target && dimension) {
+        // Three or more units that partly cancel, like kN/(GPa·mm⁴): SI units for what's
+        // left, or its named unit (m⁻² here). kN·m and kN/m stay as they are.
+        int named = 0;
+        int total = 0;
+        std::vector<std::string> seen;
+        replaceSymbols(split.units, [&](const Symbol& s) -> std::optional<Expr> {
+            if (std::find(seen.begin(), seen.end(), s.name) == seen.end()) {
+                seen.push_back(s.name);
+            }
+            return std::nullopt;
+        });
+        for (const ExprFactor& f : split.units.kind() == Expr::Kind::Product
+                                      ? split.units.factors()
+                                      : std::vector<ExprFactor>{{split.units, Expr(1)}}) {
+            const Rational e = f.exponent.number().exact();
+            for (std::size_t b = 0; b < Dimension::kCount; ++b) {
+                const Rational x = f.base.symbol().dimension[static_cast<BaseDimension>(b)] * e;
+                total += static_cast<int>(std::abs(x.toDouble()) * 1000);
+            }
+        }
+        for (std::size_t b = 0; b < Dimension::kCount; ++b) {
+            named += static_cast<int>(std::abs((*dimension)[static_cast<BaseDimension>(b)].toDouble()) * 1000);
+        }
+        if (seen.size() >= 3 && total > named) {
+            target = siUnits(*dimension);
         }
     }
     if (!target) {

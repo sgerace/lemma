@@ -14,13 +14,34 @@ namespace lemma {
 void Environment::define(const std::string& name, Quantity value)
 {
     functions_.erase(name);
+    unavailable_.erase(name);
     variables_[name] = value;
 }
 
 void Environment::defineFunction(const std::string& name, Function function)
 {
     variables_.erase(name);
+    unavailable_.erase(name);
     functions_[name] = std::move(function);
+}
+
+void Environment::defineUnavailable(const std::string& name, std::string why)
+{
+    variables_.erase(name);
+    functions_.erase(name);
+    unavailable_[name] = std::move(why);
+}
+
+const std::string* Environment::unavailable(std::string_view name) const
+{
+    const auto it = unavailable_.find(std::string(name));
+    if (it != unavailable_.end()) {
+        return &it->second;
+    }
+    if (variables_.contains(std::string(name)) || functions_.contains(std::string(name))) {
+        return nullptr;
+    }
+    return parent_ ? parent_->unavailable(name) : nullptr;
 }
 
 const Quantity* Environment::variable(std::string_view name) const
@@ -29,7 +50,7 @@ const Quantity* Environment::variable(std::string_view name) const
     if (it != variables_.end()) {
         return &it->second;
     }
-    if (functions_.contains(std::string(name))) {
+    if (functions_.contains(std::string(name)) || unavailable_.contains(std::string(name))) {
         return nullptr; // shadowed by a function in this scope
     }
     return parent_ ? parent_->variable(name) : nullptr;
@@ -41,7 +62,7 @@ const Function* Environment::function(std::string_view name) const
     if (it != functions_.end()) {
         return &it->second;
     }
-    if (variables_.contains(std::string(name))) {
+    if (variables_.contains(std::string(name)) || unavailable_.contains(std::string(name))) {
         return nullptr;
     }
     return parent_ ? parent_->function(name) : nullptr;
@@ -169,6 +190,9 @@ public:
 private:
     Quantity identifier(const Node& node) const
     {
+        if (const std::string* why = env_.unavailable(node.name)) {
+            throw Error(*why, node.begin, node.end, node.origin);
+        }
         const Unit* unit = UnitRegistry::instance().find(node.name);
         if (lookup_ == Lookup::UnitsFirst && unit) {
             return unitValue(*unit, node);
@@ -221,6 +245,9 @@ private:
 
     Quantity call(const Node& node) const
     {
+        if (const std::string* why = env_.unavailable(node.name)) {
+            throw Error(*why, node.begin, node.end, node.origin);
+        }
         std::vector<Quantity> args;
         args.reserve(node.args.size());
         for (const NodePtr& arg : node.args) {

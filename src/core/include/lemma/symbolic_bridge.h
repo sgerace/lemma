@@ -16,6 +16,9 @@ struct SymbolicDefinition {
     std::vector<std::string> params; // a function's
     bool function = false;
     const MathNode* body = nullptr;  // the right-hand side; it sees the definitions before it
+    // A symbolic definition's result knows its units: these identifiers of `body`. For
+    // a typed definition, which names are units is decided as for the region (section 8).
+    const std::vector<int>* units = nullptr;
 };
 
 struct LowerOptions {

@@ -730,15 +730,21 @@ MathEditor::Change MathEditor::typeStatement(char op)
 
 MathEditor::Change MathEditor::typeSymbolic()
 {
-    // Ctrl+. acts on the whole region, like ":" and "=", and leaves the caret on the
-    // keyword (symbolic spec, section 6.2).
-    if (root_.isStatement() || root_.kind == Kind::Placeholder) {
+    // Ctrl+. acts on the whole region, like ":" and "=", or on a definition's value
+    // (symbolic spec, sections 6.2 and 7.1), and leaves the caret on the keyword.
+    MathNode* target = &root_;
+    if (root_.kind == Kind::Definition) {
+        target = &root_.children[1];
+    } else if (root_.isStatement()) {
+        return Change::None;
+    }
+    if (target->kind == Kind::Placeholder || target->kind == Kind::Symbolic) {
         return Change::None;
     }
     MathNode keyword;
     const MathCaret next = leftEdge(keyword);
-    MathNode expression = std::move(root_);
-    root_ = MathNode(Kind::Symbolic, {std::move(expression), std::move(keyword)});
+    MathNode expression = std::move(*target);
+    *target = MathNode(Kind::Symbolic, {std::move(expression), std::move(keyword)});
     caret_ = next;
     return Change::Edited;
 }
@@ -1025,9 +1031,9 @@ MathEditor::Change MathEditor::eraseAtRightEdge(int id)
             }
             if (p->children[after].kind == Kind::Placeholder) {
                 if (p->children.size() == 2) {
-                    MathNode kept = std::move(root_.children[0]); // Delete before an empty keyword: no more →
-                    root_ = std::move(kept);
-                    caret_ = rightEdge(root_);
+                    MathNode kept = std::move(p->children[0]); // Delete before an empty keyword: no more →
+                    *p = std::move(kept);
+                    caret_ = rightEdge(*p);
                 } else {
                     p->children.erase(p->children.begin() + static_cast<std::ptrdiff_t>(after));
                 }

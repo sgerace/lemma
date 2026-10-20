@@ -92,7 +92,7 @@ struct BadTree {};
 // Where a node is, which decides what it may be: a statement only as the whole region,
 // a keyword only in a symbolic evaluation's keyword slots, and an equation only as a
 // whole slot.
-enum class Place { Root, Expression, KeywordSlot, Argument, Other };
+enum class Place { Root, Expression, KeywordSlot, Argument, DefinitionValue, Other };
 
 lemma::MathNode fromJson(const QJsonValue& value, Place place = Place::Other)
 {
@@ -137,9 +137,11 @@ lemma::MathNode fromJson(const QJsonValue& value, Place place = Place::Other)
         return call;
     }
     // A definition or evaluation is only ever a whole region.
-    if (root && kind == "definition") return lemma::MathNode(Kind::Definition, {slot("lhs"), slot("rhs")});
+    if (root && kind == "definition") {
+        return lemma::MathNode(Kind::Definition, {slot("lhs"), slot("rhs", Place::DefinitionValue)});
+    }
     if (root && kind == "evaluation") return lemma::MathNode(Kind::Evaluation, {slot("expr"), slot("unit")});
-    if (root && kind == "symbolic") {
+    if ((root || place == Place::DefinitionValue) && kind == "symbolic") {
         lemma::MathNode symbolic(Kind::Symbolic, {slot("expr", Place::Expression)});
         for (const QJsonValue& k : o.value("keywords").toArray()) {
             symbolic.children.push_back(fromJson(k, Place::KeywordSlot));

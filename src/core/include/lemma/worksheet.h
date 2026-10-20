@@ -28,6 +28,10 @@ struct RegionResult {
     // Symbolic evaluation: what an operation couldn't do, shown as a note under the
     // result. Not an error (docs/symbolic-spec.md, section 9).
     std::string note;
+    // Symbolic definition: the result it defines the name as, to full precision, and
+    // its identifiers that are units. Later regions use this, not the display.
+    std::optional<MathNode> definedAs;
+    std::vector<int> definedUnits;
     std::string error;
     int errorNode = 0;          // math regions: the node the error refers to
     std::size_t errorBegin = 0; // plot regions: the byte range of the field the error refers to
