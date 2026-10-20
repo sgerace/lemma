@@ -59,7 +59,7 @@ public:
     Change flip();   // Insert
 
     // Linear text of the selection, or of the whole region with no selection; nothing if
-    // it has a placeholder, which has no linear form.
+    // it isn't finished (a placeholder, or a number like "2e-"), since it wouldn't paste.
     std::optional<std::string> copy() const;
     // Pastes a tree, e.g. from mathFromLinear(): it replaces the selection or a
     // placeholder, and otherwise multiplies next to the caret.

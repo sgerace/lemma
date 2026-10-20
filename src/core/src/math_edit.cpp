@@ -1,5 +1,7 @@
 #include "lemma/math_edit.h"
 
+#include "lemma/error.h"
+
 #include <algorithm>
 #include <cctype>
 #include <utility>
@@ -922,7 +924,12 @@ MathEditor::Change MathEditor::erase(bool before)
         }
         const bool isName = p && p->kind == Kind::Call && index == 0;
         std::vector<MathNode> tokens = lexLeaf(text);
-        if (tokens.size() == 2 && !isName) {
+        // Only erase what leaves a valid leaf: "2e-3" can't lose its e, nor a name its letters
+        // before its digits.
+        if (tokens.empty() || (isName && (tokens.size() != 1 || tokens[0].kind != Kind::Identifier))) {
+            return Change::None;
+        }
+        if (tokens.size() == 2) {
             const int split = static_cast<int>(tokens[0].text.size());
             const MathCaret next = from <= split ? MathCaret{tokens[0].id, from, Side::Left, false}
                                                  : MathCaret{tokens[1].id, from - split, Side::Left, false};
@@ -930,9 +937,7 @@ MathEditor::Change MathEditor::erase(bool before)
             caret_ = next;
             return Change::Erased;
         }
-        if (tokens.size() == 1 && !isName) {
-            n->kind = tokens[0].kind;
-        }
+        n->kind = tokens[0].kind;
         n->text = std::move(text);
         caret_ = {n->id, from, Side::Left, false};
         return Change::Erased;
@@ -1117,7 +1122,14 @@ std::optional<std::string> MathEditor::copy() const
     if (hole) {
         return std::nullopt;
     }
-    return toLinear(n);
+    // Nor can anything else unfinished, like the number "2e-": what's copied must paste.
+    std::string text = toLinear(n);
+    try {
+        mathFromLinear(text);
+    } catch (const Error&) {
+        return std::nullopt;
+    }
+    return text;
 }
 
 MathEditor::Change MathEditor::paste(MathNode tree)

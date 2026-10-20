@@ -185,6 +185,9 @@ MathNode fromAst(const Node& n, std::string_view source)
         for (const NodePtr& arg : n.args) {
             call.children.push_back(fromAst(*arg, source));
         }
+        if (n.args.empty()) {
+            call.children.emplace_back(); // a call always has a slot to type in: f() is f(■)
+        }
         return call;
     }
     }
@@ -208,7 +211,7 @@ MathNode mathFromStatement(const Statement& s, std::string_view source)
             lhs.children.push_back(MathNode::identifier(param));
         }
         if (s.params.empty()) {
-            lhs.children.emplace_back(); // f() has no linear form in the tree; leave a slot to fill
+            lhs.children.emplace_back(); // as for a call, f() is f(■)
         }
         return MathNode(MathNode::Kind::Definition, {std::move(lhs), fromAst(*s.expr, source)});
     }
@@ -253,6 +256,12 @@ std::string wrapped(const MathNode& n, bool parens)
     return parens ? "(" + linear(n) + ")" : linear(n);
 }
 
+// The last leaf written for a node: what its linear text ends with.
+const MathNode& lastLeaf(const MathNode& n)
+{
+    return n.children.empty() || n.kind == MathNode::Kind::Call ? n : lastLeaf(n.children.back());
+}
+
 // Juxtaposition only parses back as multiplication before a name or a parenthesis.
 bool juxtaposes(const MathNode& rhs)
 {
@@ -288,7 +297,9 @@ std::string linear(const MathNode& n)
         case '+': return lhs + " + " + rhs;
         case '-': return lhs + " - " + rhs;
         case '*':
-            if (n.juxtaposed && (rhsParens || juxtaposes(c[1]))) {
+            // A name right before "(" would be read as a call, so only a number or ")" may.
+            if (n.juxtaposed && (rhsParens || juxtaposes(c[1]))
+                && (rhs.front() != '(' || lhs.back() == ')' || lastLeaf(c[0]).kind == MathNode::Kind::Number)) {
                 return lhs + " " + rhs;
             }
             return lhs + "*" + rhs;

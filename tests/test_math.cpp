@@ -234,6 +234,8 @@ TEST_CASE("Letters after a number juxtapose; letters in a row are one name (8.1)
     CHECK(typed("2e3") == "2e3|");
     CHECK(typed("2e-3") == "2e-3|");
     CHECK(typed("2e3{bs}") == "2 e|");
+    CHECK(typed("2e-3{left}{left}{bs}") == "2e|-3"); // "2-3" isn't a number
+    CHECK(typed("x1(a){home}{right}{bs}") == "x|1(a)"); // a name can't become "1"
     CHECK(typed("2e-{bs}") == "2 e|");
     CHECK(typed("x.") == "x|");       // literal subscripts aren't supported yet
     CHECK(typed("1.2.") == "1.2|");
@@ -368,6 +370,15 @@ TEST_CASE("Linear syntax round-trips values and tidies spacing")
     CHECK(linear("a - (b - c)") == "a - (b - c)");
     CHECK(linear("2^3^2") == "2^3^2");
     CHECK(linear("(2^3)^2") == "(2^3)^2");
+    CHECK(linear("f()") == "f(■)"); // a call always has a slot
+
+    // Juxtaposition next to "(" keeps its meaning: a name there would make a call.
+    CHECK(linear("(a/b)(c+d)") == "a/b*(c + d)");
+    const MathNode power(MathNode::Kind::Power, {MathNode::identifier("x"), MathNode::identifier("n")});
+    const MathNode group(MathNode::Kind::Group, {mathFromLinear("a + b")});
+    CHECK(toLinear(MathNode::binary('*', power, group, true)) == "x^n*(a + b)");
+    CHECK(linear("x^2 (a+b)") == "x^2 (a + b)");
+    CHECK(linear("2 (a+b)") == "2 (a + b)");
 
     // Parsing gives the 2D structure.
     CHECK(show(mathFromLinear("w L^4 / (8 E I)"), {}) == "[w L^[4] / 8 E I]");
@@ -453,6 +464,17 @@ void checkTree(const MathNode& n, bool root)
     }
 }
 
+MathNode withoutGroups(MathNode n)
+{
+    if (n.kind == MathNode::Kind::Group) {
+        return withoutGroups(std::move(n.children[0]));
+    }
+    for (MathNode& c : n.children) {
+        c = withoutGroups(std::move(c));
+    }
+    return n;
+}
+
 void checkEditor(const MathEditor& e)
 {
     checkTree(e.root(), true);
@@ -501,6 +523,13 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
             REQUIRE(findMathNode(e.root(), clicked.node));
             layout.vertical(e.root(), stop, true);
             layout.vertical(e.root(), stop, false);
+        }
+
+        // Copy's text pastes back as the same tree, less the parentheses paste drops.
+        if (const auto copied = e.copy()) {
+            INFO(*copied);
+            const MathNode& tree = e.caret().selected ? *findMathNode(e.root(), e.caret().node) : e.root();
+            REQUIRE(toLinear(mathFromLinear(*copied)) == toLinear(withoutGroups(tree)));
         }
 
         // Whatever it ended as, it lowers or reports an error on a node of its own.

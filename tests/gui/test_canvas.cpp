@@ -423,6 +423,29 @@ private slots:
         QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("width := 3"));
     }
 
+    void undoingAnOperatorGoesBackToEditing()
+    {
+        click({72, 480});
+        QTest::keyClicks(canvas_.get(), "a+");
+        undo()->undo();
+        QVERIFY(canvas_->mathCaret().has_value());
+        QTest::keyClicks(canvas_.get(), "b");
+        QCOMPARE(sheet().regions().size(), 1u);
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("ab"));
+    }
+
+    void savingAndLoadingACallWithNoArguments()
+    {
+        sheet().addRegion(72, 96, "y := f()");
+        QTemporaryDir dir;
+        const QString path = dir.filePath("call.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        QVERIFY(loaded.regions()[0].math.sameAs(sheet().regions()[0].math));
+    }
+
     void erasingUndoesAsOneStep()
     {
         const int a = sheet().addRegion(72, 120, "x := 125");

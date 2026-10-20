@@ -183,6 +183,17 @@ TEST_CASE("Clicking finds the nearest stop, and Up and Down move between stacked
     CHECK(up->node == power.children[1].id);
 }
 
+TEST_CASE("A selection of the whole region has a box to underline")
+{
+    for (const char* source : {"x := 3", "x ="}) {
+        const MathNode tree = mathFromLinear(source);
+        const MathLayout layout = layoutMath(tree, kMetrics);
+        REQUIRE(layout.box(tree.id));
+        CHECK(layout.caretGeometry({tree.id, 0, MathCaret::Side::Left, true}).x == Approx(0.0));
+        CHECK(layout.caretGeometry({tree.id, 0, MathCaret::Side::Right, true}).x == Approx(layout.box(tree.id)->right));
+    }
+}
+
 TEST_CASE("The caret's bar spans the box it is beside")
 {
     const MathNode tree = mathFromLinear("a/b");

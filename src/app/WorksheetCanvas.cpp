@@ -79,7 +79,7 @@ public:
     {
     }
 
-    int id() const override { return kind_ == EditKind::Other ? -1 : kEditMergeId; }
+    int id() const override { return kind_ == EditKind::Typing || kind_ == EditKind::Erasing ? kEditMergeId : -1; }
 
     void undo() override { canvas_->restore(before_, editId(), caretBefore_, field_); }
 
@@ -112,7 +112,7 @@ public:
     }
 
 private:
-    // Undoing typing puts the caret back in the region.
+    // Undoing an edit of a region's contents puts the caret back in the region.
     int editId() const { return kind_ == EditKind::Other ? 0 : before_.front().id; }
 
     WorksheetCanvas* canvas_;
@@ -968,7 +968,7 @@ lemma::MathEditor::Change WorksheetCanvas::editMath(
     contentChanged();
     const EditKind kind = change == Change::Typed ? EditKind::Typing
                           : change == Change::Erased ? EditKind::Erasing
-                                                     : EditKind::Other;
+                                                     : EditKind::Structure;
     record(kind == EditKind::Erasing ? tr("Delete") : tr("Typing"), std::move(before), kind, caretBefore);
     return change;
 }
@@ -991,7 +991,7 @@ void WorksheetCanvas::copyMath(bool cut)
 {
     const std::optional<std::string> text = math_->copy();
     if (!text) {
-        emit message(tr("Fill in the placeholders before copying."));
+        emit message(tr("Finish this before copying it: fill in the placeholders and numbers."));
         return;
     }
     QGuiApplication::clipboard()->setText(fromUtf8(*text));

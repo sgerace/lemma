@@ -115,10 +115,14 @@ public:
             Box box = node(root.children[0], 0);
             box.append(text(":=", size(0)), relationSpace());
             box.append(node(root.children[1], 0), relationSpace());
+            box.record(root.id, size(0)); // so a selection of the whole region can be underlined
             return box;
         }
-        case Kind::Evaluation:
-            return evaluation(root);
+        case Kind::Evaluation: {
+            Box box = evaluation(root);
+            box.record(root.id, size(0));
+            return box;
+        }
         default:
             return node(root, 0);
         }

@@ -483,3 +483,8 @@ Where the spec was silent, the implementation settles it like this. Each is test
   something there: `)` or Space alone leaves no region behind. Paste at the crosshair
   starts a region with the pasted math.
 - **Paste errors** are shown in the status bar.
+- **A call always has an argument slot.** Pasted `f()` becomes `f(■)`.
+- **Erasing never leaves a broken leaf.** Backspace or Delete does nothing if it would
+  leave text that isn't a number or a name, like `2-3` from `2e-3`, or a function name
+  starting with a digit. Copy likewise refuses anything that wouldn't paste back.
+- **Undo** of any edit to a region's contents, not only typing, goes back to editing it.

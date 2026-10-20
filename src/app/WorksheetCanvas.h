@@ -108,8 +108,10 @@ private:
     };
     using RegionStates = std::vector<RegionState>;
 
-    // Typing and erasing in one region merge into a single undo step.
-    enum class EditKind { Other, Typing, Erasing };
+    // Typing and erasing in one region merge into a single undo step. Every other edit of a
+    // region's contents (an operator, say) is a step of its own, and undo goes back to
+    // editing it, as it does for typing.
+    enum class EditKind { Other, Typing, Erasing, Structure };
 
     // Where the caret is: an index into a text or plot field, or a place in a math tree.
     struct CaretState {
