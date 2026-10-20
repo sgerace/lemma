@@ -371,7 +371,7 @@ TEST_CASE("A symbolic evaluation shows its expression simplified")
     CHECK(lastValue({"2*x + 3*x ->"}) == "5 x");
     CHECK(lastValue({"w*L^4/(8*E*I) -> simplify"}) == "w L^4/(8 E I)");
     CHECK(lastValue({"a + a == b*b ->"}) == "2 a == b^2"); // each side
-    CHECK(lastValue({"x := 2", "x*x ->"}) == "x^2");      // definitions aren't substituted yet
+    CHECK(lastValue({"x := 2", "x*x ->"}) == "4");        // definitions are substituted
 
     Worksheet ws;
     const int unknown = ws.addRegion(0, 0, "x -> frobnicate");
@@ -389,4 +389,119 @@ TEST_CASE("A symbolic evaluation shows its expression simplified")
     CHECK(z.result.errorNode == z.math.children[0].id);
 
     CHECK(lastError({"a == b ="}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
+}
+
+TEST_CASE("Symbolic evaluation substitutes the definitions above it (7)")
+{
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "P*L ->"}) == "10 kN*m");
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "P*L -> keep, P"}) == "2.5 P m");
+    CHECK(lastValue({"a := b + 1", "b := 2", "a*c ->"}) == "c*(b + 1)"); // a sees what's above it
+    CHECK(lastValue({"x := x", "x*x ->"}) == "x^2");                     // Mathcad's idiom
+    CHECK(lastValue({"M := 3*a", "M (h/2) ->"}) == "3 a h/2");           // a value times, not a call
+
+    // Functions are inlined; their parameters are never substituted, and their bodies
+    // see the definitions above them.
+    CHECK(lastValue({"f(x) := x^2 + a", "f(2*b) ->"}) == "4 b^2 + a");
+    CHECK(lastValue({"x := 5", "f(x) := x^2", "f(y) ->"}) == "y^2");
+    CHECK(lastValue({"a := 1", "f(x) := x + a", "a := 2", "f(y) ->"}) == "y + 1");
+    CHECK(lastValue({"f(x) := x^2", "f(t) -> keep, f"}) == "f(t)");
+    CHECK(lastError({"f(x) := x^2", "f(1, 2) ->"}) == "f takes 1 argument");
+    CHECK(lastError({"f(x) := x^2", "f ->"}) == "f is a function; give it arguments, like f(x)");
+
+    // An error in a definition is reported on the name that used it.
+    Worksheet ws;
+    ws.addRegion(0, 0, "P := 1 m + 1 kg");
+    const int use = ws.addRegion(0, 20, "2*P ->");
+    ws.evaluate();
+    const Region& u = *ws.region(use);
+    CHECK(u.result.error == "In P: Units don't match: m and kg");
+    CHECK(u.result.errorNode == u.math.children[0].children[1].id);
+}
+
+TEST_CASE("A unit name is a unit after a number, where nothing else is free (8)")
+{
+    Worksheet ws;
+    const int free = ws.addRegion(0, 0, "w*L^4/(8*E*I) ->");
+    const int quantity = ws.addRegion(0, 20, "2.5 m*3 ->");
+    const int derivation = ws.addRegion(0, 40, "1/2 m*v^2 + 3 L - x ->");
+    ws.evaluate();
+    const Region& f = *ws.region(free);
+    CHECK(f.result.value == "w L^4/(8 E I)");
+    CHECK(f.result.units.empty()); // L is a length here, not a litre
+    const Region& q = *ws.region(quantity);
+    CHECK(q.result.value == "7.5 m");
+    CHECK(q.result.units.size() == 2); // the m typed, and the m of the result, are upright
+    // With free names, unit names are names too: a mass, and a length.
+    const Region& d = *ws.region(derivation);
+    CHECK(d.result.value == "m v^2/2 + 3 L - x");
+    CHECK(d.result.units.empty());
+    // Definitions are read the same way: P's value has units, even where P is used with x.
+    CHECK(lastValue({"P := 4 kN", "P*x ->"}) == "4 x kN");
+    CHECK(lastValue({"f(x) := x + 2 m", "f(1 cm) ->"}) == "201 cm"); // a parameter isn't free
+
+    CHECK(lastValue({"2 m*3 m ->"}) == "6 m^2");
+    CHECK(lastValue({"9.81 m/s^2*2 s ->"}) == "19.62 m/s");
+    CHECK(lastValue({"g*t^2/2 ->"}) == "g t^2/2");
+    CHECK(lastValue({"sin(30 deg) ->"}) == "1/2");
+    CHECK(lastValue({"m*2 m -> keep, m"}) == "2 m^2"); // kept, m is a variable
+}
+
+TEST_CASE("Terms in different units of one dimension are converted to the first one's (8)")
+{
+    CHECK(lastValue({"2 m + 3 mm ->"}) == "2.003 m");
+    CHECK(lastValue({"3 mm + 2 m ->"}) == "2.003*10^3 mm"); // as numeric results show it
+    CHECK(lastValue({"1 ft + 1 in ->"}) == "1.083 ft");
+    CHECK(lastValue({"a := 2", "a*1 m + a*1 cm ->"}) == "2.02 m");
+    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "m x + x cm"); // with x free, this m is a name
+    CHECK(lastValue({"1 kN + 1 N ->"}) == "1.001 kN");
+}
+
+TEST_CASE("Units are checked as they are numerically (8)")
+{
+    Worksheet ws;
+    const int sum = ws.addRegion(0, 0, "1 m + 1 kg ->");
+    ws.evaluate();
+    const Region& r = *ws.region(sum);
+    CHECK(r.result.error == "Units don't match: m and kg");
+    CHECK(r.result.errorNode == r.math.children[0].id);
+
+    CHECK(lastValue({"a := 1 m", "x + a ->"}) == "x + 1 m"); // x's dimension is unknown: allowed
+    CHECK(lastError({"2^(1 m) ->"}) == "An exponent can't have units (it has m)");
+    CHECK(lastError({"sin(2 m) ->"}) == "sin needs a unitless argument (it has m)");
+    CHECK(lastError({"q := 2 m", "q^x ->"}) == "A quantity with units can only be raised to a number");
+}
+
+TEST_CASE("keep and real take names (5.3, 7)")
+{
+    CHECK(lastValue({"sqrt(y^2) ->"}) == "y");
+    CHECK(lastValue({"sqrt(y^2) -> real, y"}) == "abs(y)");
+    CHECK(lastValue({"y := -3 m", "sqrt(y^2) ->"}) == "3 m");
+    CHECK(lastValue({"a := 1", "b := 2", "a + b -> keep, a; simplify"}) == "a + 2");
+    CHECK(lastError({"x -> keep"}) == "keep needs the names it applies to, like keep, x");
+    CHECK(lastError({"x -> keep, 2"}) == "keep takes names");
+}
+
+TEST_CASE("A product's units are tidied, and measurements shown as decimals (8)")
+{
+    const std::initializer_list<std::string> beam = {"L := 2.5 m", "P := 4 kN", "E := 200 GPa", "b := 50 mm",
+                                                     "h := 100 mm", "I := b*h^3/12"};
+    const auto with = [&](const std::string& last) {
+        std::vector<std::string> lines(beam);
+        lines.push_back(last);
+        Worksheet ws;
+        double y = 0;
+        for (const std::string& line : lines) {
+            ws.addRegion(0, y, line);
+            y += 20;
+        }
+        ws.evaluate();
+        INFO(ws.regions().back().result.error);
+        return ws.regions().back().result.value;
+    };
+    CHECK(with("P*L^3/(3*E*I) ->") == "0.025 m"); // kN·m³/(GPa·mm⁴) is a length: m, the first
+    CHECK(with("I ->") == "4.167*10^6 mm^4");     // not 12500000/3 mm⁴
+    CHECK(with("P/L ->") == "1.6 kN/m");          // kept as typed
+    CHECK(with("P*L^3/(3*E*I) -> keep, P, L, E, I") == "P L^3/(3 E I)");
+    CHECK(lastValue({"1 m*1 mm ->"}) == "0.001 m^2");
+    CHECK(lastValue({"1 cm/(1 mm) ->"}) == "10"); // no units left
 }

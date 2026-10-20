@@ -226,7 +226,11 @@ As in Mathcad, a name defined above the region is replaced by its definition:
   (closure snapshot).
 - **Built-in functions** (sin, ln, …) are the elementary functions of section 5.1;
   `min` and `max` are kept as calls.
-- **Opting out.** The keyword `keep, L, P` leaves the names after it symbolic. It
+- **Calls on values.** `M (h/2)`, with `M` a value, is a product, as numerically.
+- **Errors** in a definition's value are reported on the name that used it, with the
+  name: "In P: Units don't match: m and kg".
+- **Opting out.** The keyword `keep, L, P` leaves the names after it symbolic, in
+  inlined function bodies too; `keep, f` leaves a function's calls as calls. It
   combines with another keyword (6.2): `keep, P; diff, x`. Mathcad's idiom of
   redefining a name as itself (`x := x`) also works, since substitution then gives
   `x` back.
@@ -262,16 +266,36 @@ A definition's right-hand side may be a symbolic evaluation:
 
 - **Which names are units.** Several unit names are also everyday variable names
   (`L` is a litre, and `C`, `N`, `A`, `K`, `R`, `s` and `m` are units too), so a name
-  the worksheet doesn't define is a unit only where it's used as one: in the units
-  right after a number (`2.5 m`, `4 kN·m`, `9.81 m/s²`), or in a definition's value
-  that is substituted (`P := 4 kN`). Anywhere else it's a plain symbol, whose
-  dimension is unknown: in `w L⁴/(8 E I)`, `L` is a length, not a litre. A unit
-  becomes a unit Symbol with its `Dimension`.
+  the worksheet doesn't define is a unit only where it's used as one: multiplied
+  right after a number, or after another such unit (`2.5 m`, `4 kN·m`, `9.81 m/s²`,
+  `2 m·3 m`), in an expression whose other names all have values. That holds for the
+  region's expression and for each definition's value as it's substituted
+  (`P := 4 kN`), whose names are read in the definition's own place. A function's
+  parameters have values for this purpose: `f(x) := x + 2 m` has units.
+  - An expression with free names is a derivation, and its unit names are names
+    too: in `½ m v²`, `m` is a mass, and in `P x² (3 L − x)`, `L` is a length. So
+    is `L` in `w L⁴/(8 E I)`, after no number at all.
+  - So `2 m + 3 mm →` is `2.003 m`, and with `P := 4 kN` above, `P x →` is
+    `4 x kN`; but `2.5 m·x →`, with `x` free, has a name `m` in it. (`keep`
+    makes a name free, with the same effect.)
+  - A unit becomes a unit Symbol with its `Dimension` and size. Anywhere else the
+    name is a plain symbol, whose dimension is unknown.
 - Units are kept as typed and combine like any factor: `2 m · 3 m` is `6 m²`, and
   `4 kN · 2.5 m` is `10 kN·m`.
 - Terms of the same dimension in different units are converted to the unit of the
   first term: `2 m + 3 mm` is `2.003 m`. The factor is exact when the units' sizes are
-  (mm is 1/1000 m); otherwise it's a decimal.
+  (mm is 1/1000 m); otherwise it's a decimal. Either way the converted number shows
+  as a decimal.
+- **Within a product**, units of one dimension become the first of them (`m·mm` is
+  `0.001 m²`), and units whose product has the dimension of one of them become that
+  one: with the cantilever's values, `P L³/(3 E I)` is
+  `kN·m³/(GPa·mm⁴)`, a length, so `0.025 m`. Units whose product has no dimension
+  disappear (`1 cm/(1 mm)` is `10`). Otherwise they're kept as typed: `kN·m`,
+  `kN/m`, `m/s²`.
+- **Measurements show as decimals**: a number with units that isn't a whole number is
+  shown as a decimal (`4.167×10⁶ mm⁴`, not `12500000/3 mm⁴`).
+- Angles in `deg` or `rad` are numbers inside functions: `sin(30 deg)` is `1/2`.
+- `g` is the constant for gravity, as numerically, unless it's defined.
 - **Checking.** Adding terms whose dimensions are known and different is an error with
   the numeric evaluator's message (`1 m + 1 kg`: "Units don't match: m and kg").
   Terms with an unknown dimension (anything with a plain symbol in it) can't be
@@ -404,6 +428,8 @@ Each assumes nothing is defined above unless shown.
 | `P := 4 kN`, `L := 2.5 m` above; `P L →` | `10 kN·m` | definitions substituted, units kept as typed |
 | same; `P L →` with `keep, P` | `2.5 P m` | units last (11) |
 | `2 m + 3 mm →` | `2.003 m` | 8 |
+| cantilever values above; `P L³/(3 E I) →` | `0.025 m` | units tidied in a product (8) |
+| `½ m v² →` | `m v²/2` | free names: `m` is a mass (8) |
 | `1 m + 1 kg →` | Units don't match: m and kg | an error, as numerically |
 | `e^(x²) →` with `integrate, x` | `∫ e^(x²) dx`, "Couldn't integrate this" | beyond the scope; not an error |
 | `√(x²) →` | `x` | symbols are positive (5.3) |

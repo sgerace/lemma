@@ -1,6 +1,7 @@
 #include "lemma/symbolic.h"
 
 #include "lemma/error.h"
+#include "lemma/format.h"
 
 #include <algorithm>
 #include <cmath>
@@ -321,8 +322,39 @@ const Expr& Expr::argument() const { return data_->args.front(); }
 const std::string& Expr::name() const { return data_->name; }
 const std::vector<Expr>& Expr::arguments() const { return data_->args; }
 
+namespace {
+
+std::string describe(const Dimension& d)
+{
+    return describeDimension(d);
+}
+
+// Terms whose dimensions are known must match: 1 m + 1 kg is an error (section 8). A
+// zero matches anything, as it does when terms cancel.
+void checkUnits(const std::vector<Expr>& operands)
+{
+    std::optional<Dimension> first;
+    for (const Expr& op : operands) {
+        if (op.isNumber() && op.number().isZero()) {
+            continue;
+        }
+        const std::optional<Dimension> d = op.dimension();
+        if (!d) {
+            continue;
+        }
+        if (!first) {
+            first = d;
+        } else if (!(*first == *d)) {
+            throw Error("Units don't match: " + describe(*first) + " and " + describe(*d));
+        }
+    }
+}
+
+} // namespace
+
 Expr Expr::sum(const std::vector<Expr>& operands)
 {
+    checkUnits(operands);
     Number constant;
     std::vector<ExprTerm> terms;
     for (const Expr& op : operands) {
@@ -515,6 +547,12 @@ bool isE(const Expr& e)
 
 Expr Expr::pow(const Expr& base, const Expr& exponent)
 {
+    if (const auto d = exponent.dimension(); d && !d->isDimensionless()) {
+        throw Error("An exponent can't have units (it has " + describe(*d) + ")");
+    }
+    if (const auto d = base.dimension(); d && !d->isDimensionless() && !exponent.isNumber()) {
+        throw Error("A quantity with units can only be raised to a number");
+    }
     if (const auto r = exactNumber(exponent)) {
         if (r->isZero()) {
             return Expr(1);
@@ -671,8 +709,18 @@ double evaluateAt(MathFunction f, double x)
 
 } // namespace
 
-Expr Expr::apply(MathFunction f, const Expr& argument)
+Expr Expr::apply(MathFunction f, const Expr& given)
 {
+    // Angles in degrees or radians are numbers: sin(30 deg) is sin(π/6).
+    const Expr argument = replaceSymbols(given, [](const Symbol& s) -> std::optional<Expr> {
+        if (s.kind == Symbol::Kind::Unit && s.dimension.isDimensionless()) {
+            return sizeOf(s);
+        }
+        return std::nullopt;
+    });
+    if (const auto d = argument.dimension(); d && !d->isDimensionless() && f != MathFunction::Abs) {
+        throw Error(std::string(functionName(f)) + " needs a unitless argument (it has " + describe(*d) + ")");
+    }
     if (argument.isNumber()) {
         const Number& n = argument.number();
         const double value = evaluateAt(f, n.toDouble());
@@ -803,6 +851,9 @@ int compare(const Expr& a, const Expr& b)
         if (a.symbol().kind != b.symbol().kind) {
             return a.symbol().kind < b.symbol().kind ? -1 : 1;
         }
+        if (a.symbol().positive != b.symbol().positive) {
+            return a.symbol().positive ? -1 : 1;
+        }
         return a.symbol().name.compare(b.symbol().name) < 0 ? -1 : a.symbol().name == b.symbol().name ? 0 : 1;
     case Expr::Kind::Sum:
         if (const int c = sequence(a.terms(), b.terms(), [](const ExprTerm& x, const ExprTerm& y) {
@@ -838,13 +889,113 @@ int compare(const Expr& a, const Expr& b)
     return 0;
 }
 
+std::optional<Dimension> Expr::dimension() const
+{
+    switch (kind()) {
+    case Kind::Number:
+        return Dimension();
+    case Kind::Symbol:
+        if (symbol().kind == Symbol::Kind::Variable) {
+            return std::nullopt;
+        }
+        return symbol().dimension;
+    case Kind::Sum: {
+        // Terms are checked when the sum is made, so the first known one says it all.
+        for (const ExprTerm& t : terms()) {
+            if (const auto d = t.expr.dimension()) {
+                return d;
+            }
+        }
+        return Dimension();
+    }
+    case Kind::Product: {
+        Dimension result;
+        for (const ExprFactor& f : factors()) {
+            const auto d = f.base.dimension();
+            if (!d) {
+                return std::nullopt;
+            }
+            if (d->isDimensionless()) {
+                continue;
+            }
+            const auto e = exactNumber(f.exponent);
+            if (!e) {
+                return std::nullopt;
+            }
+            result = result * d->pow(*e);
+        }
+        return result;
+    }
+    case Kind::Function:
+        return function() == MathFunction::Abs ? argument().dimension() : std::optional<Dimension>(Dimension());
+    case Kind::Call:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+Expr replaceSymbols(const Expr& e, const std::function<std::optional<Expr>(const Symbol&)>& replace)
+{
+    switch (e.kind()) {
+    case Expr::Kind::Number:
+        return e;
+    case Expr::Kind::Symbol: {
+        auto r = replace(e.symbol());
+        return r ? *r : e;
+    }
+    case Expr::Kind::Sum: {
+        std::vector<Expr> parts{Expr(e.constant())};
+        for (const ExprTerm& t : e.terms()) {
+            parts.push_back(Expr(t.coefficient) * replaceSymbols(t.expr, replace));
+        }
+        return Expr::sum(parts);
+    }
+    case Expr::Kind::Product: {
+        std::vector<Expr> parts{Expr(e.coefficient())};
+        for (const ExprFactor& f : e.factors()) {
+            parts.push_back(Expr::pow(replaceSymbols(f.base, replace), replaceSymbols(f.exponent, replace)));
+        }
+        return Expr::product(parts);
+    }
+    case Expr::Kind::Function:
+        return Expr::apply(e.function(), replaceSymbols(e.argument(), replace));
+    case Expr::Kind::Call: {
+        std::vector<Expr> args;
+        for (const Expr& a : e.arguments()) {
+            args.push_back(replaceSymbols(a, replace));
+        }
+        return Expr::call(e.name(), std::move(args));
+    }
+    }
+    return e;
+}
+
+Expr sizeOf(const Symbol& s)
+{
+    if (s.name == "deg") {
+        return Expr::pi() / Expr(180);
+    }
+    const double v = s.size;
+    // A power of ten, or a simple fraction: mm is 1/1000, ft 381/1250, min 60.
+    for (std::int64_t den = 1; den <= 1'000'000'000'000LL; den *= 10) {
+        const double n = std::round(v * static_cast<double>(den));
+        if (std::abs(n) < 9e15 && std::abs(n / static_cast<double>(den) - v) <= 1e-12 * std::abs(v)) {
+            return Expr(Number(Rational(static_cast<std::int64_t>(n), den)));
+        }
+    }
+    if (const auto r = Rational::fromDouble(v)) {
+        return Expr(Number(*r));
+    }
+    return Expr(Number::approximate(v));
+}
+
 bool Expr::isPositive() const
 {
     switch (kind()) {
     case Kind::Number:
         return !number().isNegative() && !number().isZero();
     case Kind::Symbol:
-        return true;
+        return symbol().positive;
     case Kind::Sum:
         return !constant().isNegative() && std::all_of(terms().begin(), terms().end(), [](const ExprTerm& t) {
                    return !t.coefficient.isNegative() && t.expr.isPositive();

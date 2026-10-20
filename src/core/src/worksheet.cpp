@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <span>
 
 namespace lemma {
 
@@ -65,7 +66,7 @@ std::optional<MathNode> defaultUnit(const Dimension& dim)
 // The keywords of docs/symbolic-spec.md, section 9, that come in later steps.
 bool isPlannedKeyword(const std::string& name)
 {
-    for (const char* k : {"expand", "factor", "substitute", "solve", "diff", "integrate", "keep", "real"}) {
+    for (const char* k : {"expand", "factor", "substitute", "solve", "diff", "integrate"}) {
         if (name == k) {
             return true;
         }
@@ -73,13 +74,17 @@ bool isPlannedKeyword(const std::string& name)
     return false;
 }
 
-// expression → result (docs/symbolic-spec.md). With no keyword, or `simplify`, the
-// result is the expression simplified; an equation's sides are simplified each.
-RegionResult evaluateSymbolicRegion(const MathNode& math, const FormatOptions& format)
+// expression → result (docs/symbolic-spec.md). Names defined above are substituted,
+// except those `keep` lists; with no other keyword, or `simplify`, the result is the
+// expression simplified, and an equation's sides are simplified each.
+RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const SymbolicDefinition> definitions,
+                                    const FormatOptions& format)
 {
     RegionResult result;
     result.kind = Statement::Kind::Symbolic;
     try {
+        LowerOptions lowering;
+        lowering.definitions = definitions;
         for (std::size_t i = 1; i < math.children.size(); ++i) {
             const MathNode& k = math.children[i];
             if (k.kind == MathNode::Kind::Placeholder) {
@@ -89,7 +94,22 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, const FormatOptions& f
             if (name.kind != MathNode::Kind::Identifier) {
                 throw Error("Fill in the placeholder", 0, 0, name.id);
             }
-            if (name.text == "simplify") {
+            const bool modifier = name.text == "keep" || name.text == "real";
+            if (modifier) {
+                // keep, L, P: the names to leave symbolic (7); real, y: the names that may be negative (5.3).
+                if (k.kind != MathNode::Kind::Keyword) {
+                    throw Error(name.text + " needs the names it applies to, like " + name.text + ", x", 0, 0, name.id);
+                }
+                for (std::size_t j = 1; j < k.children.size(); ++j) {
+                    const MathNode& arg = k.children[j];
+                    if (arg.kind != MathNode::Kind::Identifier) {
+                        throw Error(arg.kind == MathNode::Kind::Placeholder ? "Fill in the placeholder"
+                                                                            : name.text + " takes names",
+                                    0, 0, arg.id);
+                    }
+                    (name.text == "keep" ? lowering.keep : lowering.real).push_back(arg.text);
+                }
+            } else if (name.text == "simplify") {
                 if (k.kind == MathNode::Kind::Keyword) {
                     throw Error("simplify takes no arguments", 0, 0, k.children[1].id);
                 }
@@ -100,17 +120,27 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, const FormatOptions& f
             }
         }
 
+        std::vector<std::string> order;
+        lowering.units = &result.units;
+        lowering.order = &order;
         const MathNode& expression = math.children[0];
-        ExprDisplayOptions options;
-        options.order = namesInOrder(expression);
-        options.format = format;
-        const auto shown = [&](const MathNode& side) { return mathFromExpr(simplify(exprFromMath(side)), options); };
-        if (expression.kind == MathNode::Kind::Equation) {
-            result.symbolic = MathNode(MathNode::Kind::Equation,
-                                       {shown(expression.children[0]), shown(expression.children[1])});
-        } else {
-            result.symbolic = shown(expression);
+        const bool equation = expression.kind == MathNode::Kind::Equation;
+        std::vector<Expr> sides;
+        for (const MathNode* side : equation ? std::vector{&expression.children[0], &expression.children[1]}
+                                             : std::vector{&expression}) {
+            sides.push_back(exprFromMath(*side, lowering));
         }
+
+        ExprDisplayOptions display;
+        display.order = order;
+        display.format = format;
+        display.upright = &result.units;
+        std::vector<MathNode> shown;
+        for (const Expr& e : sides) {
+            shown.push_back(mathFromExpr(combineUnits(simplify(e), order), display));
+        }
+        result.symbolic = equation ? MathNode(MathNode::Kind::Equation, {std::move(shown[0]), std::move(shown[1])})
+                                   : std::move(shown[0]);
         result.value = toLinear(*result.symbolic);
         result.status = RegionResult::Status::Ok;
     } catch (const Error& e) {
@@ -121,11 +151,35 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, const FormatOptions& f
     return result;
 }
 
+// What a definition region gives symbolic evaluations below it, if it defines a name.
+std::optional<SymbolicDefinition> symbolicDefinition(const MathNode& math)
+{
+    if (math.kind != MathNode::Kind::Definition) {
+        return std::nullopt;
+    }
+    const MathNode& lhs = math.children[0];
+    SymbolicDefinition d;
+    d.body = &math.children[1];
+    if (lhs.kind == MathNode::Kind::Identifier) {
+        d.name = lhs.text;
+        return d;
+    }
+    if (lhs.kind != MathNode::Kind::Call || lhs.children[0].kind != MathNode::Kind::Identifier) {
+        return std::nullopt;
+    }
+    d.name = lhs.children[0].text;
+    d.function = true;
+    for (std::size_t i = 1; i < lhs.children.size(); ++i) {
+        if (lhs.children[i].kind != MathNode::Kind::Identifier) {
+            return std::nullopt;
+        }
+        d.params.push_back(lhs.children[i].text);
+    }
+    return d;
+}
+
 RegionResult evaluateMathRegion(const MathNode& math, Environment& env, const FormatOptions& format)
 {
-    if (math.kind == MathNode::Kind::Symbolic) {
-        return evaluateSymbolicRegion(math, format);
-    }
     RegionResult result;
     try {
         const Statement s = lowerMath(math);
@@ -278,8 +332,18 @@ void Worksheet::evaluate()
     });
 
     Environment env;
+    std::vector<SymbolicDefinition> definitions; // for symbolic evaluations, as written
     for (Region* r : order) {
-        r->result = r->kind == Region::Kind::Plot ? evaluatePlotRegion(*r, env) : evaluateMathRegion(r->math, env, format);
+        if (r->kind == Region::Kind::Plot) {
+            r->result = evaluatePlotRegion(*r, env);
+        } else if (r->math.kind == MathNode::Kind::Symbolic) {
+            r->result = evaluateSymbolicRegion(r->math, definitions, format);
+        } else {
+            r->result = evaluateMathRegion(r->math, env, format);
+            if (auto d = symbolicDefinition(r->math)) {
+                definitions.push_back(std::move(*d));
+            }
+        }
     }
 }
 

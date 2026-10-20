@@ -1,8 +1,10 @@
 #pragma once
 
+#include "lemma/dimension.h"
 #include "lemma/rational.h"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,15 +53,21 @@ private:
     bool decimal_ = false;
 };
 
-// A name in an expression. Every symbol is a positive real (section 5.3).
+// A name in an expression. A variable is a positive real unless the `real` keyword
+// says it may be negative (section 5.3). Units and constants have a dimension and a
+// size in SI base units (section 8); a variable's dimension is unknown.
 struct Symbol {
     enum class Kind {
         Variable,
-        Constant, // π and e
+        Constant, // π, e, and g (gravity)
+        Unit,     // m, kN, ...
     };
 
     std::string name;
     Kind kind = Kind::Variable;
+    bool positive = true;
+    Dimension dimension;
+    double size = 1.0; // a unit's or constant's value in SI base units
 
     friend bool operator==(const Symbol&, const Symbol&) = default;
 };
@@ -78,7 +86,7 @@ struct ExprFactor;
 // equal expressions compare equal. Immutable, and cheap to copy.
 //
 // Construction throws lemma::Error (with no node) for what has no value: a division by
-// zero, or an even root of a negative number.
+// zero, an even root of a negative number, or a sum of terms whose units don't match.
 class Expr {
 public:
     enum class Kind {
@@ -95,9 +103,26 @@ public:
     Expr(std::int64_t n) : Expr(Number(n)) {}
 
     static Expr symbol(Symbol s);
-    static Expr variable(std::string name) { return symbol({std::move(name), Symbol::Kind::Variable}); }
-    static Expr pi() { return symbol({"π", Symbol::Kind::Constant}); }
-    static Expr e() { return symbol({"e", Symbol::Kind::Constant}); }
+    // A positive variable, or with `positive` false, a real one of either sign.
+    static Expr variable(std::string name, bool positive = true)
+    {
+        Symbol s;
+        s.name = std::move(name);
+        s.positive = positive;
+        return symbol(std::move(s));
+    }
+    static Expr constant(std::string name, const Dimension& dimension, double size)
+    {
+        Symbol s{std::move(name), Symbol::Kind::Constant, true, dimension, size};
+        return symbol(std::move(s));
+    }
+    static Expr pi() { return constant("π", {}, 3.141592653589793); }
+    static Expr e() { return constant("e", {}, 2.718281828459045); }
+    static Expr unit(std::string name, const Dimension& dimension, double size)
+    {
+        Symbol s{std::move(name), Symbol::Kind::Unit, true, dimension, size};
+        return symbol(std::move(s));
+    }
 
     static Expr sum(const std::vector<Expr>& operands);
     static Expr product(const std::vector<Expr>& operands);
@@ -131,6 +156,8 @@ public:
 
     // True when the expression is positive for every value of its symbols.
     bool isPositive() const;
+    // Its dimension, if known: unknown when it has a variable in it.
+    std::optional<Dimension> dimension() const;
 
     // Canonical linear text, for tests and messages: "3*x^2 + y".
     std::string debugString() const;
@@ -148,6 +175,14 @@ struct ExprTerm {
     Expr expr;
     Number coefficient;
 };
+
+// The expression with each symbol `replace` gives a value for replaced, rebuilt in
+// canonical form.
+Expr replaceSymbols(const Expr& e, const std::function<std::optional<Expr>(const Symbol&)>& replace);
+
+// A unit's or constant's size as a number: exact when it's a simple fraction (mm is
+// 1/1000 m), otherwise a decimal. A degree is π/180.
+Expr sizeOf(const Symbol& s);
 
 // A factor of a Product: base^exponent. A number base is a positive integer with an
 // exponent that isn't one.

@@ -2,12 +2,14 @@
 
 #include "lemma/error.h"
 #include "lemma/evaluator.h"
+#include "lemma/units.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <tuple>
+#include <unordered_set>
 
 namespace lemma {
 
@@ -82,51 +84,276 @@ Number parseNumber(const MathNode& m)
     return Number::approximate(value);
 }
 
-Expr lowerName(const std::string& name)
+// A tree's leaves in reading order, with what joins each to the one before: a product
+// (·, juxtaposition, a fraction or an exponent) or anything else (+, −, a comma).
+struct Reading {
+    const MathNode* leaf;
+    bool multiplied; // joined to the leaf before by multiplication
+};
+
+void read(const MathNode& n, std::vector<Reading>& out, bool& multiplied)
 {
-    if (name == "π" || name == "pi") {
-        return Expr::pi();
+    const auto& c = n.children;
+    switch (n.kind) {
+    case MathNode::Kind::Number:
+    case MathNode::Kind::Identifier:
+    case MathNode::Kind::Placeholder:
+        out.push_back({&n, multiplied});
+        multiplied = false;
+        return;
+    case MathNode::Kind::Binary:
+        read(c[0], out, multiplied);
+        multiplied = n.op == '*';
+        read(c[1], out, multiplied);
+        return;
+    case MathNode::Kind::Fraction:
+    case MathNode::Kind::Power:
+        read(c[0], out, multiplied);
+        multiplied = true;
+        read(c[1], out, multiplied);
+        return;
+    case MathNode::Kind::Call:
+    case MathNode::Kind::Keyword:
+    case MathNode::Kind::Equation:
+    case MathNode::Kind::Definition:
+    case MathNode::Kind::Evaluation:
+    case MathNode::Kind::Symbolic:
+        // A function's name isn't read, and its arguments stand apart.
+        for (std::size_t i = n.kind == MathNode::Kind::Call ? 1 : 0; i < c.size(); ++i) {
+            multiplied = false;
+            read(c[i], out, multiplied);
+        }
+        multiplied = false;
+        return;
+    default: // Negate, Radical, Group: what's inside, as it reads
+        for (const MathNode& child : c) {
+            read(child, out, multiplied);
+        }
+        return;
     }
-    if (name == "e") {
-        return Expr::e();
-    }
-    return Expr::variable(name);
 }
 
-Expr lower(const MathNode& m)
+// The names in a tree that may be units (section 8): a unit name multiplied right after
+// a number, or after another such name: 2.5 m, 4 kN·m, 9.81 m/s², 2 m·3 m.
+void collectUnitCandidates(const MathNode& n, std::unordered_set<int>& out)
 {
-    const auto& c = m.children;
-    try {
-        switch (m.kind) {
-        case MathNode::Kind::Number:
-            return Expr(parseNumber(m));
-        case MathNode::Kind::Identifier:
-            return lowerName(m.text);
-        case MathNode::Kind::Binary:
-            switch (m.op) {
-            case '+': return lower(c[0]) + lower(c[1]);
-            case '-': return lower(c[0]) - lower(c[1]);
-            case '*': return lower(c[0]) * lower(c[1]);
-            default: throw Error("Fill in the placeholder", 0, 0, m.id);
+    std::vector<Reading> leaves;
+    bool multiplied = false;
+    read(n, leaves, multiplied);
+    for (std::size_t i = 1; i < leaves.size(); ++i) {
+        const MathNode& leaf = *leaves[i].leaf;
+        const MathNode& before = *leaves[i - 1].leaf;
+        if (leaf.kind == MathNode::Kind::Identifier && leaves[i].multiplied
+            && (before.kind == MathNode::Kind::Number || out.contains(before.id))
+            && UnitRegistry::instance().find(leaf.text)) {
+            out.insert(leaf.id);
+        }
+    }
+}
+
+// Lowers a region's tree, replacing the names defined above it by their definitions
+// (section 7) and telling units from variables (section 8).
+class Lowerer {
+public:
+    explicit Lowerer(const LowerOptions& options) : o_(options) {}
+
+    Expr region(const MathNode& m)
+    {
+        Scope scope{o_.definitions.size(), nullptr, 0, nullptr};
+        const std::unordered_set<int> units = unitPositions(m, scope);
+        scope.units = &units;
+        return lower(m, scope);
+    }
+
+private:
+    using Bindings = std::vector<std::pair<std::string, Expr>>;
+
+    struct Scope {
+        std::size_t visible;     // how many of the definitions it sees
+        const Bindings* params;  // a function's parameters, when lowering its body
+        int depth;               // 0 for the region's own tree
+        const std::unordered_set<int>* units;
+    };
+
+    bool listed(const std::vector<std::string>& names, const std::string& name) const
+    {
+        return std::find(names.begin(), names.end(), name) != names.end();
+    }
+
+    // The latest definition of `name` that `scope` sees.
+    const SymbolicDefinition* definition(const std::string& name, const Scope& scope) const
+    {
+        for (std::size_t i = scope.visible; i-- > 0;) {
+            if (o_.definitions[i].name == name) {
+                return &o_.definitions[i];
             }
-        case MathNode::Kind::Negate:
-            return -lower(c[0]);
-        case MathNode::Kind::Fraction:
-            return lower(c[0]) / lower(c[1]);
-        case MathNode::Kind::Power:
-            return Expr::pow(lower(c[0]), lower(c[1]));
-        case MathNode::Kind::Radical:
-            return Expr::pow(lower(c[0]), Expr(Number(Rational(1, 2))));
-        case MathNode::Kind::Group:
-            return lower(c[0]);
-        case MathNode::Kind::Call: {
-            if (c[0].kind != MathNode::Kind::Identifier) {
-                throw Error("Fill in the placeholder", 0, 0, c[0].id);
+        }
+        return nullptr;
+    }
+
+    Expr named(Expr e)
+    {
+        if (o_.order && e.kind() == Expr::Kind::Symbol) {
+            const std::string& name = e.symbol().name;
+            if (!listed(*o_.order, name)) {
+                o_.order->push_back(name);
             }
-            const std::string& name = c[0].text;
-            std::vector<Expr> args;
-            for (std::size_t i = 1; i < c.size(); ++i) {
-                args.push_back(lower(c[i]));
+        }
+        return e;
+    }
+
+    Expr variable(const std::string& name)
+    {
+        return named(Expr::variable(name, !listed(o_.real, name)));
+    }
+
+    // True if `name` is free in `scope`: no definition, parameter or constant gives it a
+    // value.
+    bool isFree(const std::string& name, const Scope& scope) const
+    {
+        if (scope.params && std::any_of(scope.params->begin(), scope.params->end(),
+                                        [&](const auto& p) { return p.first == name; })) {
+            return false;
+        }
+        if (listed(o_.keep, name)) {
+            return true;
+        }
+        return !definition(name, scope) && name != "π" && name != "pi" && name != "e" && name != "g";
+    }
+
+    // The names in a tree that are units (section 8): the candidates, when the tree has
+    // no free names besides them. 2 m + 3 mm has units; in ½ m v², m is a mass.
+    std::unordered_set<int> unitPositions(const MathNode& tree, const Scope& scope) const
+    {
+        std::unordered_set<int> candidates;
+        collectUnitCandidates(tree, candidates);
+        if (candidates.empty()) {
+            return candidates;
+        }
+        bool free = false;
+        const auto visit = [&](const auto& self, const MathNode& n) -> void {
+            if (n.kind == MathNode::Kind::Identifier && !candidates.contains(n.id) && isFree(n.text, scope)) {
+                free = true;
+            }
+            for (std::size_t i = n.kind == MathNode::Kind::Call ? 1 : 0; i < n.children.size(); ++i) {
+                self(self, n.children[i]);
+            }
+        };
+        visit(visit, tree);
+        return free ? std::unordered_set<int>{} : candidates;
+    }
+
+    // A definition's body, in the definitions above it, with its parameters bound. From
+    // the region's own tree, an error in it is reported on the name that used it.
+    Expr body(const SymbolicDefinition& d, const Bindings* params, const MathNode& at, const Scope& scope)
+    {
+        const auto lowerBody = [&] {
+            Scope inner{static_cast<std::size_t>(&d - o_.definitions.data()), params, scope.depth + 1, nullptr};
+            const std::unordered_set<int> units = unitPositions(*d.body, inner);
+            inner.units = &units;
+            return lower(*d.body, inner);
+        };
+        if (scope.depth > 0) {
+            return lowerBody();
+        }
+        try {
+            return lowerBody();
+        } catch (const Error& e) {
+            throw Error("In " + d.name + ": " + e.what(), 0, 0, at.id);
+        }
+    }
+
+    Expr identifier(const MathNode& m, const Scope& scope)
+    {
+        const std::string& name = m.text;
+        if (scope.params) {
+            for (const auto& [param, value] : *scope.params) {
+                if (param == name) {
+                    return value;
+                }
+            }
+        }
+        if (!listed(o_.keep, name)) {
+            if (const SymbolicDefinition* d = definition(name, scope)) {
+                if (d->function) {
+                    throw Error(name + " is a function; give it arguments, like " + name + "(x)", 0, 0, m.id);
+                }
+                return body(*d, nullptr, m, scope);
+            }
+            if (name == "π" || name == "pi") {
+                return named(Expr::pi());
+            }
+            if (name == "e") {
+                return named(Expr::e());
+            }
+            if (name == "g") {
+                return named(Expr::constant("g", Dimension::of(1, 0, -2), 9.80665));
+            }
+            if (scope.units->contains(m.id)) {
+                if (const Unit* unit = UnitRegistry::instance().find(name)) {
+                    if (scope.depth == 0 && o_.units) {
+                        o_.units->push_back(m.id);
+                    }
+                    return named(Expr::unit(name, unit->value.dim, unit->value.value));
+                }
+            }
+        }
+        return variable(name);
+    }
+
+    Expr call(const MathNode& m, const Scope& scope)
+    {
+        const auto& c = m.children;
+        if (c[0].kind != MathNode::Kind::Identifier) {
+            throw Error("Fill in the placeholder", 0, 0, c[0].id);
+        }
+        const std::string& name = c[0].text;
+        // A defined value comes first, as it reads: in M (h/2), M's names before h.
+        std::optional<Expr> value;
+        if (!listed(o_.keep, name) && !(scope.params && std::any_of(scope.params->begin(), scope.params->end(),
+                                                                    [&](const auto& p) { return p.first == name; }))) {
+            if (const SymbolicDefinition* d = definition(name, scope); d && !d->function) {
+                value = body(*d, nullptr, c[0], scope);
+            }
+        }
+        std::vector<Expr> args;
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            args.push_back(lower(c[i], scope));
+        }
+        if (value) {
+            if (args.size() != 1) {
+                throw Error(name + " is not a function", 0, 0, m.id);
+            }
+            return *value * args[0];
+        }
+        // "M (h/2)" on a value is multiplication, as numerically.
+        const auto times = [&](const Expr& value) {
+            if (args.size() != 1) {
+                throw Error(name + " is not a function", 0, 0, m.id);
+            }
+            return value * args[0];
+        };
+        if (scope.params) {
+            for (const auto& [param, value] : *scope.params) {
+                if (param == name) {
+                    return times(value);
+                }
+            }
+        }
+        if (!listed(o_.keep, name)) {
+            if (const SymbolicDefinition* d = definition(name, scope)) {
+                if (!d->function) {
+                    return times(body(*d, nullptr, c[0], scope));
+                }
+                if (args.size() != d->params.size()) {
+                    const std::size_t n = d->params.size();
+                    throw Error(name + " takes " + std::to_string(n) + (n == 1 ? " argument" : " arguments"), 0, 0, m.id);
+                }
+                Bindings params;
+                for (std::size_t i = 0; i < args.size(); ++i) {
+                    params.emplace_back(d->params[i], args[i]);
+                }
+                return body(*d, &params, m, scope); // inlined (section 7)
             }
             const bool unary = name == "sqrt" || name == "exp" || functionNamed(name).has_value();
             if (unary && args.size() != 1) {
@@ -136,33 +363,66 @@ Expr lower(const MathNode& m)
                 return Expr::pow(args[0], Expr(Number(Rational(1, 2))));
             }
             if (name == "exp") {
-                return Expr::pow(Expr::e(), args[0]);
+                return Expr::pow(named(Expr::e()), args[0]);
             }
             if (const auto f = functionNamed(name)) {
                 return Expr::apply(*f, args[0]);
             }
-            return Expr::call(name, std::move(args)); // min, max, and undefined functions
         }
-        case MathNode::Kind::Placeholder:
-            throw Error("Fill in the placeholder", 0, 0, m.id);
-        case MathNode::Kind::Equation:
-            throw Error("An equation can only be a whole expression", 0, 0, m.id);
-        case MathNode::Kind::Keyword:
-            throw Error("A keyword goes after →", 0, 0, m.id);
-        case MathNode::Kind::Definition:
-        case MathNode::Kind::Evaluation:
-        case MathNode::Kind::Symbolic:
-            break;
-        }
-        throw Error("Only a whole region can be a definition or evaluation", 0, 0, m.id);
-    } catch (const Error& e) {
-        if (e.node() != 0) {
-            throw;
-        }
-        // From building the expression: the error belongs to this node.
-        throw Error(e.what(), 0, 0, m.id);
+        return Expr::call(name, std::move(args)); // min, max, and undefined functions
     }
-}
+
+    Expr lower(const MathNode& m, const Scope& scope)
+    {
+        const auto& c = m.children;
+        try {
+            switch (m.kind) {
+            case MathNode::Kind::Number:
+                return Expr(parseNumber(m));
+            case MathNode::Kind::Identifier:
+                return identifier(m, scope);
+            case MathNode::Kind::Binary:
+                switch (m.op) {
+                case '+': return lower(c[0], scope) + lower(c[1], scope);
+                case '-': return lower(c[0], scope) - lower(c[1], scope);
+                case '*': return lower(c[0], scope) * lower(c[1], scope);
+                default: throw Error("Fill in the placeholder", 0, 0, m.id);
+                }
+            case MathNode::Kind::Negate:
+                return -lower(c[0], scope);
+            case MathNode::Kind::Fraction:
+                return lower(c[0], scope) / lower(c[1], scope);
+            case MathNode::Kind::Power:
+                return Expr::pow(lower(c[0], scope), lower(c[1], scope));
+            case MathNode::Kind::Radical:
+                return Expr::pow(lower(c[0], scope), Expr(Number(Rational(1, 2))));
+            case MathNode::Kind::Group:
+                return lower(c[0], scope);
+            case MathNode::Kind::Call:
+                return call(m, scope);
+            case MathNode::Kind::Placeholder:
+                throw Error("Fill in the placeholder", 0, 0, m.id);
+            case MathNode::Kind::Equation:
+                throw Error("An equation can only be a whole expression", 0, 0, m.id);
+            case MathNode::Kind::Keyword:
+                throw Error("A keyword goes after →", 0, 0, m.id);
+            case MathNode::Kind::Definition:
+            case MathNode::Kind::Evaluation:
+            case MathNode::Kind::Symbolic:
+                break;
+            }
+            throw Error("Only a whole region can be a definition or evaluation", 0, 0, m.id);
+        } catch (const Error& e) {
+            if (e.node() != 0) {
+                throw;
+            }
+            // From building the expression: the error belongs to this node.
+            throw Error(e.what(), 0, 0, m.id);
+        }
+    }
+
+    const LowerOptions& o_;
+};
 
 void collectNames(const MathNode& m, std::vector<std::string>& names)
 {
@@ -183,9 +443,9 @@ void collectNames(const MathNode& m, std::vector<std::string>& names)
 
 } // namespace
 
-Expr exprFromMath(const MathNode& node)
+Expr exprFromMath(const MathNode& node, const LowerOptions& options)
 {
-    return lower(node);
+    return Lowerer(options).region(node);
 }
 
 std::vector<std::string> namesInOrder(const MathNode& node)
@@ -228,17 +488,25 @@ int fromSuperscript(std::string_view s)
     return sign * value;
 }
 
-MathNode juxtapose(std::vector<MathNode> nodes)
+// Factors side by side, and whether each is a unit.
+MathNode juxtapose(std::vector<MathNode> nodes, const std::vector<bool>& units)
 {
     MathNode result = std::move(nodes.front());
     for (std::size_t i = 1; i < nodes.size(); ++i) {
         // "3 x", but "3·2^(1/3)": a number after another factor would read as one number.
+        // Between units, a dot: kN·m.
         const MathNode& next = nodes[i];
         const bool number = next.kind == MathNode::Kind::Number
                             || (next.kind == MathNode::Kind::Power && next.children[0].kind == MathNode::Kind::Number);
-        result = MathNode::binary('*', std::move(result), std::move(nodes[i]), !number);
+        const bool dot = number || (units[i] && units[i - 1]);
+        result = MathNode::binary('*', std::move(result), std::move(nodes[i]), !dot);
     }
     return result;
+}
+
+bool isUnit(const Expr& e)
+{
+    return e.kind() == Expr::Kind::Symbol && e.symbol().kind == Symbol::Kind::Unit;
 }
 
 // How often each variable occurs, and its highest degree, to choose the main variable.
@@ -314,13 +582,27 @@ public:
         }
     }
 
+    // A whole result: a unit alone keeps its number, 1 m.
+    MathNode result(const Expr& e) const
+    {
+        if (isUnit(e)) {
+            return product(Number(1), {{e, Expr(1)}});
+        }
+        return raise(e);
+    }
+
     MathNode raise(const Expr& e) const
     {
         switch (e.kind()) {
         case Expr::Kind::Number:
             return number(e.number());
-        case Expr::Kind::Symbol:
-            return MathNode::identifier(e.symbol().name);
+        case Expr::Kind::Symbol: {
+            MathNode n = MathNode::identifier(e.symbol().name);
+            if (isUnit(e) && options_.upright) {
+                options_.upright->push_back(n.id);
+            }
+            return n;
+        }
         case Expr::Kind::Sum:
             return sum(e);
         case Expr::Kind::Product: {
@@ -423,6 +705,9 @@ private:
             if (base.symbol().kind == Symbol::Kind::Constant) {
                 return {1, 0};
             }
+            if (base.symbol().kind == Symbol::Kind::Unit) {
+                return {6, appearance(base.symbol().name)}; // units last: 10 kN·m
+            }
             const bool root = f.exponent.isNumber() && !f.exponent.number().isInteger();
             const std::size_t order = base.symbol().name == main_ && !root ? std::numeric_limits<std::size_t>::max()
                                                                           : appearance(base.symbol().name);
@@ -474,33 +759,48 @@ private:
 
         std::vector<MathNode> top;
         std::vector<MathNode> bottom;
-        if (!coefficient.isExact() || coefficient.decimal()) {
+        std::vector<bool> topUnits;
+        std::vector<bool> bottomUnits;
+        // A measurement, a number with units, shows as a decimal: 4.167×10⁶ mm⁴, not 12500000/3 mm⁴.
+        const bool measured = std::any_of(factors.begin(), factors.end(), [](const ExprFactor& f) { return isUnit(f.base); });
+        if (!coefficient.isExact() || coefficient.decimal() || (measured && !coefficient.isInteger())) {
             if (!coefficient.isOne() || up.empty()) {
-                top.push_back(number(coefficient));
+                top.push_back(number(coefficient.isExact() ? Number(coefficient.exact(), true) : coefficient));
+                topUnits.push_back(false);
             }
         } else {
             const Rational& r = coefficient.exact();
-            if (r.num() != 1 || up.empty()) {
+            // A quantity keeps its number: 1 m, not m.
+            const bool unitsOnly = !up.empty() && std::all_of(up.begin(), up.end(), [](const ExprFactor& f) {
+                return isUnit(f.base);
+            });
+            if (r.num() != 1 || up.empty() || unitsOnly) {
                 top.push_back(MathNode::number(std::to_string(r.num())));
+                topUnits.push_back(false);
             }
             if (r.den() != 1) {
                 bottom.push_back(MathNode::number(std::to_string(r.den())));
+                bottomUnits.push_back(false);
             }
         }
         for (const ExprFactor& f : up) {
             top.push_back(factor(f));
+            topUnits.push_back(isUnit(f.base));
         }
         for (const ExprFactor& f : down) {
             bottom.push_back(factor(f));
+            bottomUnits.push_back(isUnit(f.base));
         }
-        if (top.size() > 1 && top.front().kind == MathNode::Kind::Number && top.front().text == "1") {
+        if (top.size() > 1 && top.front().kind == MathNode::Kind::Number && top.front().text == "1"
+            && !std::all_of(topUnits.begin() + 1, topUnits.end(), [](bool u) { return u; })) {
             top.erase(top.begin());
+            topUnits.erase(topUnits.begin());
         }
-        MathNode numerator = juxtapose(std::move(top));
+        MathNode numerator = juxtapose(std::move(top), topUnits);
         if (bottom.empty()) {
             return numerator;
         }
-        return MathNode(MathNode::Kind::Fraction, {std::move(numerator), juxtapose(std::move(bottom))});
+        return MathNode(MathNode::Kind::Fraction, {std::move(numerator), juxtapose(std::move(bottom), bottomUnits)});
     }
 
     // A term, c · expr, shown without its sign.
@@ -510,6 +810,14 @@ private:
             return product(c.abs() * expr.coefficient(), expr.factors());
         }
         return product(c.abs(), {{expr, Expr(1)}});
+    }
+
+    static bool unitsOnly(const Expr& e)
+    {
+        if (e.kind() == Expr::Kind::Product) {
+            return std::all_of(e.factors().begin(), e.factors().end(), [](const ExprFactor& f) { return isUnit(f.base); });
+        }
+        return isUnit(e);
     }
 
     static bool mentions(const Expr& e, const std::string& name)
@@ -574,7 +882,14 @@ private:
                 if (!(da == db)) {
                     return da > db;
                 }
-            } else if (!main_.empty()) {
+            }
+            // A quantity, a number with units, goes last like a constant: x + 1 m.
+            const bool qa = unitsOnly(a.expr);
+            const bool qb = unitsOnly(b.expr);
+            if (qa != qb) {
+                return qb;
+            }
+            if (main.empty() && !main_.empty()) {
                 const bool ma = mentions(a.expr, main_);
                 const bool mb = mentions(b.expr, main_);
                 if (ma != mb) {
@@ -616,7 +931,7 @@ private:
 
 MathNode mathFromExpr(const Expr& e, const ExprDisplayOptions& options)
 {
-    return Raiser(e, options).raise(e);
+    return Raiser(e, options).result(e);
 }
 
 } // namespace lemma
