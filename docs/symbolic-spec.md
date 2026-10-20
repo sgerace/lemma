@@ -1,7 +1,7 @@
 # Symbolic math: design
 
-Status: **draft for review** (issue #16). Nothing here is implemented. Per the issue,
-no engine code is written until this note is agreed.
+Status: **agreed** (issue #16). Nothing here is implemented yet; section 13 is the
+plan. Change this note along with the engine.
 
 Lemma evaluates numerically: every expression becomes a `Quantity`. This note adds
 Mathcad's symbolic evaluation operator, `→`, which returns an expression instead of
@@ -419,9 +419,5 @@ Decided:
 3. **Symbolic definitions are in the first cut** (7.1, plan step 7).
 4. **Decimal display** (5.2): exact arithmetic, shown as decimals once a decimal
    number is involved, as on a calculator.
-
-Open:
-
-5. **Positive symbols** (5.3). Proposed as written there: positive by default, which
-   only affects names with no definition (substitution supplies the rest), the
-   `real` keyword to opt a name out, and `solve` never discarding a root on sign.
+5. **Free symbols are positive reals** (5.3), with the `real` keyword to opt a name
+   out, and `solve` keeping every root.
