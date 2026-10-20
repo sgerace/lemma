@@ -8,6 +8,7 @@
 #include "lemma/error.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <numeric>

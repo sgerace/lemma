@@ -6,6 +6,7 @@
 #include "lemma/units.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
