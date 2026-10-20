@@ -17,10 +17,13 @@ before plugging numbers in. The result is typeset with the 2D layout from #7.
 | Placement | `lemma_core`, no Qt, no new dependency, so it builds wherever Lemma does (#8) | 3 |
 | Syntax | `→` (Ctrl+. or the `→` character), with an optional keyword above the arrow: `simplify`, `expand`, `factor`, `substitute`, `solve`, `diff`, `integrate` | 6 |
 | Definitions | Names defined above are replaced by their definitions, as in Mathcad; the keyword `keep` opts names out | 7 |
+| Assumptions | Free symbols are positive reals; the keyword `real` opts a name out | 5.3 |
+| Symbolic definitions | `θ(x) := y(x) → diff, x` defines a function from a symbolic result, to evaluate or plot | 7.1 |
 | Units | Unit names are symbols with known dimensions, kept as typed and combined like other powers; mismatches are errors, as in numeric evaluation | 8 |
 | Conversion | Tree ↔ engine expressions, with each engine node's origin, so errors name a node | 4 |
 | Storage | The `→` statement is a new root node, so `.lemma` goes to version 5. Results are recomputed, not stored | 10 |
-| First cut | All seven keywords, each within a documented scope (section 9) | 9, 12 |
+| Numbers | Exact arithmetic throughout, shown as decimals once a decimal number is involved | 5.2 |
+| First cut | All seven keywords, each within a documented scope (section 9), and symbolic definitions | 9, 12, 13 |
 
 Two assumptions in #16 changed with #7: errors now name a tree node, not a byte range,
 and since files store trees, a new statement node does need a version bump.
@@ -45,9 +48,8 @@ Non-goals (for the in-house engine; a back end may add them later):
 - General integration (the Risch algorithm), special functions, limits and series.
 - Multivariate factoring, Gröbner bases, systems of nonlinear equations.
 - Trigonometric identities beyond `sin² + cos² = 1` and simple angle forms.
-- Assumptions (`x > 0`) beyond what's built in: symbols are taken as positive reals
-  wherever that decides a simplification, as is right for engineering quantities
-  (section 5.3).
+- General assumptions (`x > 2`, `n` an integer): free symbols are positive reals, or
+  real with the `real` keyword (section 5.3), and nothing finer.
 - Matrices (they come with #27).
 
 ## 3. Architecture
@@ -132,11 +134,22 @@ can be compared and hashed:
 
 ### 5.3 Built-in assumptions
 
-All symbols are positive reals. So `√(x²)` is `x`, `ln(a b)` can be `ln(a) + ln(b)`,
+Symbols are positive reals. So `√(x²)` is `x`, `ln(a b)` can be `ln(a) + ln(b)`,
 and `(a b)^(1/2)` is `√a √b`. This is the one deliberate departure from a
-general-purpose CAS: it is right for lengths, loads and moduli, and it is what keeps
-results short. Operations whose correctness depends on a sign, like `solve` taking a
-square root, give both roots anyway (section 9.5).
+general-purpose CAS (Mathcad's symbols are complex until `assume` says otherwise): it
+is right for lengths, loads and moduli, and it is what keeps results short.
+
+What limits the risk:
+
+- **It only touches free names.** Definitions are substituted (7), so a defined name
+  arrives as its value with its sign: with `y := −3 mm`, `√(y²)` is `3 mm`. The
+  assumption applies only to names with no definition above.
+- **An opt-out.** The keyword `real, y` makes `y` a real of either sign for the
+  region: `√(y²)` is then `|y|`, and `ln(a y)` stays whole. Like `keep`, it combines
+  with other keywords (`real, y; diff, x`).
+- **`solve` doesn't use it.** It never discards a root on sign: `F ⩵ k d²` gives both
+  `d = √(F/k)` and `d = −√(F/k)` (9.5). Two roots that differ only in a radical's sign
+  are shown as one, with `±`.
 
 ## 6. Syntax and editing
 
@@ -159,7 +172,7 @@ expression  →  result         keyword above the arrow when given:   solve, σ
 
 | Key | Does | Notes |
 |---|---|---|
-| Ctrl+. (or typing `→`) | Turns a bare expression into `Symbolic(expression, ■)`, caret on the keyword placeholder | Mathcad's key. Acts on the whole region, like `:` and `=` |
+| Ctrl+. (or typing `→`) | Turns a bare expression into `Symbolic(expression, ■)`, caret on the keyword placeholder. In a definition, it acts on the right-hand side (7.1) | Mathcad's key. Acts on the whole region (or right-hand side), like `:` and `=` |
 | A name in the keyword slot, then `,` | Starts the keyword's arguments: `solve,` gives `solve, ■` | Arguments are separated by `,` |
 | `;` in the keyword slot | Starts another keyword. Keywords apply left to right: `keep, P; diff, x` | Mathcad stacks keywords the same way |
 | Ctrl+= | An equation's equals sign, `⩵` (drawn as a bold `=`) | Only meaningful as a symbolic expression; elsewhere it's an error |
@@ -211,6 +224,29 @@ As in Mathcad, a name defined above the region is replaced by its definition:
 Why substitute by default: worksheets are written top to bottom with values defined
 first, and `→` then shows the formula with the numbers in it, which is how an engineer
 checks their work. To derive a formula, they use undefined names, or `keep`.
+
+### 7.1 Symbolic definitions
+
+A definition's right-hand side may be a symbolic evaluation:
+
+```
+θ(x) := y(x) → diff, x  →  P x (2 L − x)/(2 E I)
+```
+
+- **Meaning.** The name is defined as the *result*, as if it had been typed there.
+  Later regions evaluate it numerically, plot it, or use it in another `→`, like any
+  definition. The result is shown after the arrow, as in a plain `→` region.
+- **Parameters.** A function's parameters are never substituted, even when a name
+  like `x` is defined above: inside `θ(x) := …`, `x` is the parameter.
+- **Order.** The result is computed at the definition's position, from the
+  definitions above it, then captured like any function's body (closure snapshot).
+- **Beyond scope.** When the operation couldn't finish (an integral left unevaluated),
+  the definition still shows the result with its note, and using the name numerically
+  is an error at the use: "θ has no closed form". Numeric integration comes later.
+- **Variables** work the same way: `M_max := w L²/8 → keep, w` defines `M_max` as
+  the expression, which evaluates numerically wherever `w` is defined.
+- Errors in the symbolic step are reported on the definition, and later uses of the
+  name are errors ("θ isn't defined"), as with a numeric definition that fails.
 
 ## 8. Units
 
@@ -271,7 +307,7 @@ Replaces each named symbol, then simplifies. `value` is any expression.
 - `x` inside one invertible function or power: undoes it (`F ⩵ k d²` gives
   `d = √(F/k)` and `d = −√(F/k)`; `y ⩵ e^(k t)` gives `t = ln(y)/k`).
 - Several solutions are shown as a list, `σ = …, σ = …`, until matrices (#27) allow a
-  column.
+  column; two that differ only in a radical's sign are shown as one, with `±` (5.3).
 - Beyond that, through the back end; the in-house one returns "Couldn't solve this
   for x".
 
@@ -300,7 +336,8 @@ engine can represent.
 - **Results** go in `RegionResult` as a tree (alongside `value`, `number` and `unit`),
   are recomputed on every evaluation, and are never saved.
 - **Files.** `Symbolic` and `Equation` are new node kinds, so `.lemma` goes to version
-  5. The JSON form: `{"kind": "symbolic", "expr": …, "keyword": …}` and
+  5. The JSON form: `{"kind": "symbolic", "expr": …, "keyword": …}` (as a region's
+  root, or as a definition's `rhs`, 7.1) and
   `{"kind": "equation", "lhs": …, "rhs": …}`. A keyword is a `call` node whose name is
   the keyword (`solve`, args `[σ]`). Version 4 files are refused, as pre-release
   policy says.
@@ -340,7 +377,7 @@ Each assumes nothing is defined above unless shown.
 | `x² − 5x + 6 →` with `factor` | `(x − 2) (x − 3)` | |
 | `6 a x + 9 a →` with `factor` | `3 a (2 x + 3)` | |
 | `M ⩵ σ I/c →` with `solve, σ` | `σ = M c/I` | |
-| `a x² + b x + c →` with `solve, x` | `x = (−b + √(b² − 4 a c))/(2 a), x = (−b − √(b² − 4 a c))/(2 a)` | |
+| `a x² + b x + c →` with `solve, x` | `x = (−b ± √(b² − 4 a c))/(2 a)` | two roots, shown with `±` |
 | `y(x) := P x² (3 L − x)/(6 E I)` above; `y(x) →` with `diff, x` | `P x (2 L − x)/(2 E I)` | the function is inlined (7) |
 | `w x →` with `integrate, x, 0, L` | `w L²/2` | |
 | `x sin(k x) →` with `integrate, x` | `sin(k x)/k² − x cos(k x)/k` | by parts |
@@ -350,6 +387,8 @@ Each assumes nothing is defined above unless shown.
 | `1 m + 1 kg →` | Units don't match: m and kg | an error, as numerically |
 | `e^(x²) →` with `integrate, x` | `∫ e^(x²) dx`, "Couldn't integrate this" | beyond the scope; not an error |
 | `√(x²) →` | `x` | symbols are positive (5.3) |
+| `√(y²) →` with `real, y` | `\|y\|` | the opt-out (5.3) |
+| `θ(x) := y(x) →` with `diff, x`, with `y` as above | `P x (2 L − x)/(2 E I)`; `θ(L) =` then evaluates | symbolic definition (7.1) |
 
 ## 13. Plan
 
@@ -360,26 +399,29 @@ Each step lands with Catch2 tests; the editor and canvas steps also with GUI cas
    cancellation).
 2. **Editor and file format:** the `Symbolic` and `Equation` nodes, Ctrl+. and Ctrl+=,
    the keyword slot, linear form, version 5, and results laid out and painted.
-3. **Definitions and units:** substitution (7), `keep`, unit symbols and checking (8).
+3. **Definitions and units:** substitution (7), `keep`, `real`, unit symbols and
+   checking (8).
 4. **`expand`, `substitute`, `diff`.**
 5. **`factor`, then simplify's polynomial cancellation** (9.1), which uses it.
 6. **`solve` and `integrate`**, behind `SymbolicBackend`.
+7. **Symbolic definitions** (7.1): `Symbolic` as a definition's right-hand side, its
+   result defining the name, and plots of it.
 
 The worksheet demo (a beam derivation from load to deflection, then plotted) is
-possible after step 6, and nicer still with symbolic definitions (14, question 4).
+possible after step 7.
 
-## 14. Open questions for review
+## 14. Review
 
-1. **Substituting definitions by default** (7). Mathcad's behavior, chosen so `→`
-   checks a worksheet's numbers. The alternative, keeping names symbolic unless asked,
-   suits derivations better. Which should be the default?
-2. **Positive symbols** (5.3). Right for engineering, and it keeps results short, but
-   `√(x²) = x` is wrong for a negative `x`. Is the trade acceptable?
-3. **The keyword above the arrow** (6.1). Mathcad 15 puts keywords in a placeholder
-   left of the arrow, and Mathcad Prime above it. Above is more compact; agreed?
-4. **Symbolic definitions.** `θ(x) := y(x) → diff, x`, defining a function as a
-   symbolic result so it can be evaluated and plotted, is the most useful extension
-   and the best demo. It needs `Symbolic` allowed as a definition's right-hand side.
-   Include it in the first cut (after step 6), or leave it for a follow-up issue?
-5. **Decimal display** (5.2). Exact arithmetic throughout, but shown as a decimal once
-   a decimal number is involved. Agreed, or always exact fractions?
+Decided:
+
+1. **Definitions are substituted by default** (7), as in Mathcad.
+2. **The keyword goes above the arrow** (6.1), as in Mathcad Prime.
+3. **Symbolic definitions are in the first cut** (7.1, plan step 7).
+4. **Decimal display** (5.2): exact arithmetic, shown as decimals once a decimal
+   number is involved, as on a calculator.
+
+Open:
+
+5. **Positive symbols** (5.3). Proposed as written there: positive by default, which
+   only affects names with no definition (substitution supplies the rest), the
+   `real` keyword to opt a name out, and `solve` never discarding a root on sign.
