@@ -273,7 +273,9 @@ private:
                 const char op = next().text[0];
                 lhs = makeBinary(op, lhs, unary());
             } else if (peek().kind == Token::Kind::Identifier || peek().kind == Token::Kind::LParen) {
-                lhs = makeBinary('*', lhs, unary());
+                auto product = std::make_shared<Node>(*makeBinary('*', lhs, unary()));
+                product->juxtaposed = true;
+                lhs = std::move(product);
             } else {
                 return lhs;
             }

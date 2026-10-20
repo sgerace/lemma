@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QStatusBar>
 
 namespace {
 
@@ -25,6 +26,7 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(canvas_);
     // Undoing back to the saved state clears the modified marker.
     connect(canvas_->undoStack(), &QUndoStack::cleanChanged, this, [this](bool clean) { setWindowModified(!clean); });
+    connect(canvas_, &WorksheetCanvas::message, this, [this](const QString& text) { statusBar()->showMessage(text, 5000); });
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("&New"), QKeySequence::New, this, &MainWindow::newFile);
@@ -138,16 +140,21 @@ void MainWindow::showQuickReference()
     QMessageBox::information(this, tr("Quick Reference"), tr(
         "<p>Click anywhere on the page to place the red crosshair, then start typing.</p>"
         "<table cellspacing='6'>"
-        "<tr><td><code>L := 2 m</code></td><td>Define a variable (typing <code>:</code> inserts <code>:=</code>)</td></tr>"
-        "<tr><td><code>L =</code></td><td>Show a result</td></tr>"
-        "<tr><td><code>L = ft</code></td><td>Show a result in a chosen unit</td></tr>"
-        "<tr><td><code>f(x) := x^2</code></td><td>Define a function</td></tr>"
-        "<tr><td><code>10 N/m</code></td><td>A space multiplies, like <code>*</code></td></tr>"
+        "<tr><td><code>L:2.5m</code></td><td>Define a variable: <code>:</code> gives <code>:=</code>, "
+        "and a letter after a number multiplies (<code>2.5 m</code>)</td></tr>"
+        "<tr><td><code>L=</code></td><td>Show a result; type a unit after it, like <code>ft</code></td></tr>"
+        "<tr><td><code>f(x):x^2</code></td><td>Define a function</td></tr>"
+        "<tr><td><code>/</code> <code>^</code> <code>\\</code></td><td>Fraction, exponent, square root. "
+        "Typing stays in a denominator or exponent; press → to leave it</td></tr>"
+        "<tr><td>Space</td><td>Select more: the next operator applies to everything underlined "
+        "(Shift+Space selects less)</td></tr>"
+        "<tr><td>Tab</td><td>Go to the next placeholder ■</td></tr>"
         "<tr><td><code>\"</code></td><td>Start a text region, for headings and notes</td></tr>"
         "<tr><td><code>@</code></td><td>Insert an X-Y plot: type a function like <code>f</code>, "
         "then Tab through the axis placeholders</td></tr>"
         "</table>"
-        "<p>Worksheets calculate top to bottom, then left to right. Drag a region to move it.</p>"
+        "<p>Worksheets calculate top to bottom, then left to right. Drag a region to move it; "
+        "drag across the math you're editing to select part of it.</p>"
         "<p>Drag on empty space or Shift+click to select regions (Ctrl+A selects all). "
         "Drag or use the arrow keys to move the selection; Delete removes it.</p>"
         "<p>Built-ins: sqrt, abs, sin, cos, tan, asin, acos, atan, ln, log, exp, min, max; "

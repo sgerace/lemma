@@ -12,6 +12,9 @@ add_library(lemma_core STATIC
     src/dimension.cpp
     src/evaluator.cpp
     src/format.cpp
+    src/math.cpp
+    src/math_edit.cpp
+    src/math_layout.cpp
     src/parser.cpp
     src/plot.cpp
     src/units.cpp

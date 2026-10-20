@@ -1,102 +1,421 @@
 {
     "format": "lemma-worksheet",
-    "version": 1,
     "regions": [
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "L"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "2.5"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "m"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 96,
-            "source": "L := 2.5 m"
+            "y": 96
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "P"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "4"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "kN"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 96,
-            "source": "P := 4 kN"
+            "y": 96
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "E"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "200"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "GPa"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 480,
-            "y": 96,
-            "source": "E := 200 GPa"
+            "y": 96
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "b"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "50"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "mm"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 144,
-            "source": "b := 50 mm"
+            "y": 144
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "h"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "100"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "mm"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 144,
-            "source": "h := 100 mm"
+            "y": 144
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "I"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "number",
+                        "text": "12"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "identifier",
+                            "text": "b"
+                        },
+                        "rhs": {
+                            "base": {
+                                "kind": "identifier",
+                                "text": "h"
+                            },
+                            "exp": {
+                                "kind": "number",
+                                "text": "3"
+                            },
+                            "kind": "power"
+                        },
+                        "style": "juxtaposed"
+                    }
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 192,
-            "source": "I := b h^3 / 12"
+            "y": 192
         },
         {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "I"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "base": {
+                        "kind": "identifier",
+                        "text": "mm"
+                    },
+                    "exp": {
+                        "kind": "number",
+                        "text": "4"
+                    },
+                    "kind": "power"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 192,
-            "source": "I = mm^4"
+            "y": 192
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "M"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "identifier",
+                        "text": "P"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "L"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 240,
-            "source": "M := P L"
+            "y": 240
         },
         {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "M"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "identifier",
+                        "text": "kN"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "m"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 240,
-            "source": "M = kN m"
+            "y": 240
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "σ"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "identifier",
+                        "text": "I"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "args": [
+                            {
+                                "den": {
+                                    "kind": "number",
+                                    "text": "2"
+                                },
+                                "kind": "fraction",
+                                "num": {
+                                    "kind": "identifier",
+                                    "text": "h"
+                                }
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "M"
+                        }
+                    }
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 288,
-            "source": "σ := M (h/2) / I"
+            "y": 288
         },
         {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "σ"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "MPa"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 288,
-            "source": "σ = MPa"
+            "y": 288
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "δ"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "3"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "E"
+                            },
+                            "style": "juxtaposed"
+                        },
+                        "rhs": {
+                            "kind": "identifier",
+                            "text": "I"
+                        },
+                        "style": "juxtaposed"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "identifier",
+                            "text": "P"
+                        },
+                        "rhs": {
+                            "base": {
+                                "kind": "identifier",
+                                "text": "L"
+                            },
+                            "exp": {
+                                "kind": "number",
+                                "text": "3"
+                            },
+                            "kind": "power"
+                        },
+                        "style": "juxtaposed"
+                    }
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 336,
-            "source": "δ := P L^3 / (3 E I)"
+            "y": 336
         },
         {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "δ"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "mm"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 336,
-            "source": "δ = mm"
+            "y": 336
         },
         {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "δ_allow"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "number",
+                        "text": "240"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "identifier",
+                        "text": "L"
+                    }
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 384,
-            "source": "δ_allow := L / 240"
+            "y": 384
         },
         {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "δ_allow"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "mm"
+                }
+            },
             "type": "math",
             "x": 288,
-            "y": 384,
-            "source": "δ_allow = mm"
+            "y": 384
         },
         {
+            "math": {
+                "expr": {
+                    "den": {
+                        "kind": "identifier",
+                        "text": "δ_allow"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "identifier",
+                        "text": "δ"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "placeholder"
+                }
+            },
             "type": "math",
             "x": 72,
-            "y": 432,
-            "source": "δ / δ_allow ="
+            "y": 432
         }
-    ]
+    ],
+    "version": 4
 }

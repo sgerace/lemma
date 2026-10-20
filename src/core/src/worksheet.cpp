@@ -2,7 +2,7 @@
 
 #include "lemma/error.h"
 #include "lemma/evaluator.h"
-#include "lemma/parser.h"
+#include "lemma/units.h"
 
 #include <algorithm>
 #include <memory>
@@ -11,61 +11,93 @@ namespace lemma {
 
 namespace {
 
-std::string trim(std::string_view s)
+// The unit a result is shown in when none is given, as a tree to typeset: a named unit
+// (J), SI base units (kg·m/s²), or none for a unitless result.
+std::optional<MathNode> defaultUnit(const Dimension& dim)
 {
-    const auto first = s.find_first_not_of(" \t");
-    if (first == std::string_view::npos) {
-        return {};
+    if (dim.isDimensionless()) {
+        return std::nullopt;
     }
-    const auto last = s.find_last_not_of(" \t");
-    return std::string(s.substr(first, last - first + 1));
+    if (const Unit* unit = UnitRegistry::instance().preferredFor(dim)) {
+        return MathNode::identifier(unit->name);
+    }
+    // Mathcad-style ordering of SI base units, as in Dimension::toString.
+    struct Entry { BaseDimension dim; const char* symbol; };
+    static constexpr Entry kOrder[] = {
+        {BaseDimension::Mass, "kg"},       {BaseDimension::Length, "m"},  {BaseDimension::Time, "s"},
+        {BaseDimension::Current, "A"},     {BaseDimension::Temperature, "K"},
+        {BaseDimension::Amount, "mol"},    {BaseDimension::Luminosity, "cd"},
+    };
+    const auto product = [](std::vector<MathNode> parts) {
+        MathNode n = std::move(parts.front());
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            n = MathNode::binary('*', std::move(n), std::move(parts[i]));
+        }
+        return n;
+    };
+    std::vector<MathNode> numerator;
+    std::vector<MathNode> denominator;
+    for (const Entry& e : kOrder) {
+        const Rational exp = dim[e.dim];
+        if (exp.isZero()) {
+            continue;
+        }
+        const Rational mag = exp < Rational(0) ? -exp : exp;
+        MathNode part = MathNode::identifier(e.symbol);
+        if (!(mag == Rational(1))) {
+            MathNode power = mag.isInteger() ? MathNode::number(std::to_string(mag.num()))
+                                             : MathNode(MathNode::Kind::Fraction,
+                                                        {MathNode::number(std::to_string(mag.num())),
+                                                         MathNode::number(std::to_string(mag.den()))});
+            part = MathNode(MathNode::Kind::Power, {std::move(part), std::move(power)});
+        }
+        (exp < Rational(0) ? denominator : numerator).push_back(std::move(part));
+    }
+    if (denominator.empty()) {
+        return product(std::move(numerator));
+    }
+    MathNode top = numerator.empty() ? MathNode::number("1") : product(std::move(numerator));
+    return MathNode(MathNode::Kind::Fraction, {std::move(top), product(std::move(denominator))});
 }
 
-// Typing ':' inserts ":=" right at the caret, so "w:= 2" is common. Show definitions with
-// one space on each side, as Mathcad lays them out, whatever the source spacing.
-std::string definitionDisplay(std::string_view source, const Statement& s)
-{
-    return trim(source.substr(0, s.assignPos)) + " := " + trim(source.substr(s.assignPos + 2));
-}
-
-RegionResult evaluateRegion(const std::string& source, Environment& env, const FormatOptions& format)
+RegionResult evaluateMathRegion(const MathNode& math, Environment& env, const FormatOptions& format)
 {
     RegionResult result;
-    result.display = trim(source);
     try {
-        const Statement s = parseStatement(source);
+        const Statement s = lowerMath(math);
         result.kind = s.kind;
         switch (s.kind) {
         case Statement::Kind::Empty:
             return result;
         case Statement::Kind::Expression:
-            evaluate(*s.expr, env);
+            evaluate(*s.expr, env, Lookup::VariablesFirst, &result.units);
             break;
         case Statement::Kind::Definition:
-            env.define(s.name, evaluate(*s.expr, env));
-            result.display = definitionDisplay(source, s);
+            env.define(s.name, evaluate(*s.expr, env, Lookup::VariablesFirst, &result.units));
             break;
         case Statement::Kind::FunctionDefinition:
             env.defineFunction(s.name, {s.params, s.expr, std::make_shared<Environment>(env)});
-            result.display = definitionDisplay(source, s);
             break;
         case Statement::Kind::Evaluation: {
-            const Quantity q = evaluate(*s.expr, env);
+            const Quantity q = evaluate(*s.expr, env, Lookup::VariablesFirst, &result.units);
             if (s.unit) {
-                const Quantity unit = evaluate(*s.unit, env, Lookup::UnitsFirst);
+                const Quantity unit = evaluate(*s.unit, env, Lookup::UnitsFirst, &result.units);
                 if (!(unit.dim == q.dim)) {
                     throw Error("Units don't match: the result is " + describeDimension(q.dim) + ", but " +
                                     s.unitText + " is " + describeDimension(unit.dim),
-                                s.unit->begin, s.unit->end);
+                                0, 0, s.unit->origin);
                 }
                 if (unit.value == 0.0) {
-                    throw Error("Can't display a result in a zero unit", s.unit->begin, s.unit->end);
+                    throw Error("Can't display a result in a zero unit", 0, 0, s.unit->origin);
                 }
-                result.value = formatNumber(q.value / unit.value, format) + " " + s.unitText;
+                result.number = formatNumber(q.value / unit.value, format);
+                result.value = result.number + " " + s.unitText;
             } else {
+                result.unit = defaultUnit(q.dim);
+                const Unit* preferred = UnitRegistry::instance().preferredFor(q.dim);
+                result.number = formatNumber(preferred ? q.value / preferred->value.value : q.value, format);
                 result.value = formatQuantity(q, format);
             }
-            result.display = trim(std::string_view(source).substr(0, s.equalsPos)) + " = " + result.value;
             break;
         }
         }
@@ -73,8 +105,7 @@ RegionResult evaluateRegion(const std::string& source, Environment& env, const F
     } catch (const Error& e) {
         result.status = RegionResult::Status::Error;
         result.error = e.what();
-        result.errorBegin = e.begin();
-        result.errorEnd = e.end();
+        result.errorNode = e.node();
     }
     return result;
 }
@@ -96,34 +127,44 @@ RegionResult evaluatePlotRegion(const Region& r, const Environment& env)
 
 } // namespace
 
-int Worksheet::addRegion(double x, double y, std::string source)
+Region& Worksheet::addRegionOfKind(Region::Kind kind, double x, double y)
 {
     Region r;
     r.id = nextId_++;
+    r.kind = kind;
     r.x = x;
     r.y = y;
-    r.source = std::move(source);
     regions_.push_back(std::move(r));
-    return regions_.back().id;
+    return regions_.back();
+}
+
+int Worksheet::addRegion(double x, double y, MathNode math)
+{
+    Region& r = addRegionOfKind(Region::Kind::Math, x, y);
+    r.math = std::move(math);
+    return r.id;
+}
+
+int Worksheet::addRegion(double x, double y, std::string_view linear)
+{
+    return addRegion(x, y, mathFromLinear(linear));
 }
 
 int Worksheet::addTextRegion(double x, double y, double width, std::string text)
 {
-    const int id = addRegion(x, y, std::move(text));
-    Region& r = regions_.back();
-    r.kind = Region::Kind::Text;
+    Region& r = addRegionOfKind(Region::Kind::Text, x, y);
     r.width = width;
-    return id;
+    r.source = std::move(text);
+    return r.id;
 }
 
 int Worksheet::addPlotRegion(double x, double y, double width, double height, std::string traces)
 {
-    const int id = addRegion(x, y, std::move(traces));
-    Region& r = regions_.back();
-    r.kind = Region::Kind::Plot;
+    Region& r = addRegionOfKind(Region::Kind::Plot, x, y);
     r.width = width;
     r.height = height;
-    return id;
+    r.source = std::move(traces);
+    return r.id;
 }
 
 void Worksheet::removeRegion(int id)
@@ -173,7 +214,7 @@ void Worksheet::evaluate()
 
     Environment env;
     for (Region* r : order) {
-        r->result = r->kind == Region::Kind::Plot ? evaluatePlotRegion(*r, env) : evaluateRegion(r->source, env, format);
+        r->result = r->kind == Region::Kind::Plot ? evaluatePlotRegion(*r, env) : evaluateMathRegion(r->math, env, format);
     }
 }
 

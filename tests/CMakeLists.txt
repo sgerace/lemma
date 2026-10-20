@@ -10,6 +10,8 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(lemma_tests
     test_dimension.cpp
     test_format.cpp
+    test_math.cpp
+    test_math_layout.cpp
     test_parser.cpp
     test_worksheet.cpp
 )
