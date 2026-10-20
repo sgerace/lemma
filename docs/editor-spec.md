@@ -53,14 +53,20 @@ The linear form column is what Copy writes (section 11.3).
 | `Call` | name (an identifier), arguments 1..n | `f(a, b)` | `f(a, b)` |
 | `Definition` | lhs, rhs | `lhs := rhs` | `lhs := rhs` |
 | `Evaluation` | expression, unit (may be a placeholder) | `expr = result unit` | `expr =` or `expr = unit` |
+| `Symbolic` | expression, keyword slots 1..n | `expr → result`, keywords above the arrow | `expr ->` or `expr -> keyword; keyword` |
+| `Keyword` | name, arguments 1..n | `solve, σ` | `solve, σ` |
+| `Equation` | lhs, rhs | `lhs = rhs`, with a bold `=` | `lhs == rhs` |
+
+`Symbolic`, `Keyword` and `Equation` belong to symbolic evaluation, and their editing
+is in `docs/symbolic-spec.md`, section 6.
 
 Terms used below:
 
 - A **leaf** is a `Number`, `Identifier` or `Placeholder`.
 - A **box** is a node that typesets its children in their own slots: `Fraction`,
   `Power`, `Radical`, `Group`, `Call`. Each child of a box is the root of a **slot**.
-- The **statement** is the root: a `Definition`, an `Evaluation`, or a bare
-  expression. Its children are slots too.
+- The **statement** is the root: a `Definition`, an `Evaluation`, a `Symbolic`, or a
+  bare expression. Its children are slots too.
 - An **operator chain** is the part of a slot made of `Binary` and `Negate` nodes. It
   lays out on one line; boxes interrupt it.
 

@@ -140,6 +140,8 @@ private:
     // Whether a math region shows its error. An unfilled placeholder isn't one while it is
     // still being typed.
     bool showsError(const lemma::Region& r) const;
+    // A symbolic evaluation's note, about what an operation couldn't do.
+    bool showsNote(const lemma::Region& r) const;
     // Lays out a text region in document coordinates, wrapped at its width.
     void layoutText(QTextLayout& layout, const lemma::Region& r) const;
 
@@ -184,6 +186,8 @@ private:
     // Starts a math region at the crosshair with a command, or not at all if it does nothing.
     void startMath(const std::function<lemma::MathEditor::Change(lemma::MathEditor&)>& command);
     void copyMath(bool cut);
+    // Ctrl+Shift+C: just the region's result, as linear text to paste elsewhere.
+    void copyResult(const lemma::Region& r);
     std::function<lemma::MathEditor::Change(lemma::MathEditor&)> pasteCommand();
     void contentChanged();
     void updateScrollBars();

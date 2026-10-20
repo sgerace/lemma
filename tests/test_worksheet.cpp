@@ -365,3 +365,315 @@ TEST_CASE("Nice steps for ticks")
     CHECK(niceStep(0.3) == Catch::Approx(0.05));
     CHECK(niceStep(0) == 1.0);
 }
+
+TEST_CASE("A symbolic evaluation shows its expression simplified")
+{
+    CHECK(lastValue({"2*x + 3*x ->"}) == "5 x");
+    CHECK(lastValue({"w*L^4/(8*E*I) -> simplify"}) == "w L^4/(8 E I)");
+    CHECK(lastValue({"a + a == b*b ->"}) == "2 a == b^2"); // each side
+    CHECK(lastValue({"x := 2", "x*x ->"}) == "4");        // definitions are substituted
+
+    Worksheet ws;
+    const int unknown = ws.addRegion(0, 0, "x -> frobnicate");
+    const int later = ws.addRegion(0, 20, "x^2 - 1 -> solve, x; solve, x");
+    const int zero = ws.addRegion(0, 40, "1/(x - x) ->");
+    ws.evaluate();
+    const Region& u = *ws.region(unknown);
+    CHECK(u.result.error == "Unknown keyword: frobnicate");
+    CHECK(u.result.errorNode == u.math.children[1].id);
+    const Region& l = *ws.region(later);
+    CHECK(l.result.error == "Only one solve to a region");
+    CHECK(l.result.errorNode == l.math.children[2].children[0].id);
+    const Region& z = *ws.region(zero);
+    CHECK(z.result.error == "Division by zero");
+    CHECK(z.result.errorNode == z.math.children[0].id);
+
+    CHECK(lastError({"a == b ="}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
+}
+
+TEST_CASE("Symbolic evaluation substitutes the definitions above it (7)")
+{
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "P*L ->"}) == "10 kN*m");
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "P*L -> keep, P"}) == "2.5 P m");
+    CHECK(lastValue({"a := b + 1", "b := 2", "a*c ->"}) == "c*(b + 1)"); // a sees what's above it
+    CHECK(lastValue({"x := x", "x*x ->"}) == "x^2");                     // Mathcad's idiom
+    CHECK(lastValue({"M := 3*a", "M (h/2) ->"}) == "3 a h/2");           // a value times, not a call
+
+    // Functions are inlined; their parameters are never substituted, and their bodies
+    // see the definitions above them.
+    CHECK(lastValue({"f(x) := x^2 + a", "f(2*b) ->"}) == "4 b^2 + a");
+    CHECK(lastValue({"x := 5", "f(x) := x^2", "f(y) ->"}) == "y^2");
+    CHECK(lastValue({"a := 1", "f(x) := x + a", "a := 2", "f(y) ->"}) == "y + 1");
+    CHECK(lastValue({"f(x) := x^2", "f(t) -> keep, f"}) == "f(t)");
+    CHECK(lastError({"f(x) := x^2", "f(1, 2) ->"}) == "f takes 1 argument");
+    CHECK(lastError({"f(x) := x^2", "f ->"}) == "f is a function; give it arguments, like f(x)");
+
+    // An error in a definition is reported on the name that used it.
+    Worksheet ws;
+    ws.addRegion(0, 0, "P := 1 m + 1 kg");
+    const int use = ws.addRegion(0, 20, "2*P ->");
+    ws.evaluate();
+    const Region& u = *ws.region(use);
+    CHECK(u.result.error == "In P: Units don't match: m and kg");
+    CHECK(u.result.errorNode == u.math.children[0].children[1].id);
+}
+
+TEST_CASE("A unit name is a unit after a number, where nothing else is free (8)")
+{
+    Worksheet ws;
+    const int free = ws.addRegion(0, 0, "w*L^4/(8*E*I) ->");
+    const int quantity = ws.addRegion(0, 20, "2.5 m*3 ->");
+    const int derivation = ws.addRegion(0, 40, "1/2 m*v^2 + 3 L - x ->");
+    ws.evaluate();
+    const Region& f = *ws.region(free);
+    CHECK(f.result.value == "w L^4/(8 E I)");
+    CHECK(f.result.units.empty()); // L is a length here, not a litre
+    const Region& q = *ws.region(quantity);
+    CHECK(q.result.value == "7.5 m");
+    CHECK(q.result.units.size() == 2); // the m typed, and the m of the result, are upright
+    // With free names, unit names are names too: a mass, and a length.
+    const Region& d = *ws.region(derivation);
+    CHECK(d.result.value == "m v^2/2 + 3 L - x");
+    CHECK(d.result.units.empty());
+    // Definitions are read the same way: P's value has units, even where P is used with x.
+    CHECK(lastValue({"P := 4 kN", "P*x ->"}) == "4 x kN");
+    CHECK(lastValue({"f(x) := x + 2 m", "f(1 cm) ->"}) == "201 cm"); // a parameter isn't free
+
+    CHECK(lastValue({"2 m*3 m ->"}) == "6 m^2");
+    CHECK(lastValue({"9.81 m/s^2*2 s ->"}) == "19.62 m/s");
+    CHECK(lastValue({"g*t^2/2 ->"}) == "g t^2/2");
+    CHECK(lastValue({"sin(30 deg) ->"}) == "1/2");
+    CHECK(lastValue({"m*2 m -> keep, m"}) == "2 m^2"); // kept, m is a variable
+}
+
+TEST_CASE("Terms in different units of one dimension are converted to the first one's (8)")
+{
+    CHECK(lastValue({"2 m + 3 mm ->"}) == "2.003 m");
+    CHECK(lastValue({"3 mm + 2 m ->"}) == "2.003*10^3 mm"); // as numeric results show it
+    CHECK(lastValue({"1 ft + 1 in ->"}) == "1.083 ft");
+    CHECK(lastValue({"a := 2", "a*1 m + a*1 cm ->"}) == "2.02 m");
+    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "m x + x cm"); // with x free, this m is a name
+    CHECK(lastValue({"1 kN + 1 N ->"}) == "1.001 kN");
+}
+
+TEST_CASE("Units are checked as they are numerically (8)")
+{
+    Worksheet ws;
+    const int sum = ws.addRegion(0, 0, "1 m + 1 kg ->");
+    ws.evaluate();
+    const Region& r = *ws.region(sum);
+    CHECK(r.result.error == "Units don't match: m and kg");
+    CHECK(r.result.errorNode == r.math.children[0].id);
+
+    CHECK(lastValue({"a := 1 m", "x + a ->"}) == "x + 1 m"); // x's dimension is unknown: allowed
+    CHECK(lastError({"2^(1 m) ->"}) == "An exponent can't have units (it has m)");
+    CHECK(lastError({"sin(2 m) ->"}) == "sin needs a unitless argument (it has m)");
+    CHECK(lastError({"q := 2 m", "q^x ->"}) == "A quantity with units can only be raised to a number");
+}
+
+TEST_CASE("keep and real take names (5.3, 7)")
+{
+    CHECK(lastValue({"sqrt(y^2) ->"}) == "y");
+    CHECK(lastValue({"sqrt(y^2) -> real, y"}) == "abs(y)");
+    CHECK(lastValue({"y := -3 m", "sqrt(y^2) ->"}) == "3 m");
+    CHECK(lastValue({"a := 1", "b := 2", "a + b -> keep, a; simplify"}) == "a + 2");
+    CHECK(lastError({"x -> keep"}) == "keep needs the names it applies to, like keep, x");
+    CHECK(lastError({"x -> keep, 2"}) == "keep takes names");
+}
+
+TEST_CASE("A product's units are tidied, and measurements shown as decimals (8)")
+{
+    const std::initializer_list<std::string> beam = {"L := 2.5 m", "P := 4 kN", "E := 200 GPa", "b := 50 mm",
+                                                     "h := 100 mm", "I := b*h^3/12"};
+    const auto with = [&](const std::string& last) {
+        std::vector<std::string> lines(beam);
+        lines.push_back(last);
+        Worksheet ws;
+        double y = 0;
+        for (const std::string& line : lines) {
+            ws.addRegion(0, y, line);
+            y += 20;
+        }
+        ws.evaluate();
+        INFO(ws.regions().back().result.error);
+        return ws.regions().back().result.value;
+    };
+    CHECK(with("P*L^3/(3*E*I) ->") == "0.025 m"); // kN·m³/(GPa·mm⁴) is a length: m, the first
+    CHECK(with("I ->") == "4.167*10^6 mm^4");     // not 12500000/3 mm⁴
+    CHECK(with("P/L ->") == "1.6 kN/m");          // kept as typed
+    CHECK(with("P*L^3/(3*E*I) -> keep, P, L, E, I") == "P L^3/(3 E I)");
+    CHECK(lastValue({"1 m*1 mm ->"}) == "0.001 m^2");
+    CHECK(lastValue({"1 cm/(1 mm) ->"}) == "10"); // no units left
+}
+
+TEST_CASE("expand multiplies out (9.2)")
+{
+    CHECK(lastValue({"(a + b)^3 -> expand"}) == "a^3 + 3 a^2 b + 3 a b^2 + b^3");
+    CHECK(lastValue({"(x + 1)*(x - 1) -> expand"}) == "x^2 - 1");
+    CHECK(lastValue({"(a + b)/c -> expand"}) == "a/c + b/c");
+    CHECK(lastValue({"1/(x + 1)^2 -> expand"}) == "1/(x^2 + 2 x + 1)");
+    CHECK(lastValue({"ln(2*x*y^2) -> expand"}) == "ln(x) + 2 ln(y) + ln(2)");
+    CHECK(lastValue({"2*(x + 1) -> expand"}) == "2 x + 2");
+    CHECK(lastError({"(a + b + c + d + e1)^40 -> expand"}) == "This expands to too many terms");
+}
+
+TEST_CASE("substitute replaces names, then simplifies (9.4)")
+{
+    CHECK(lastValue({"x^2 + y -> substitute, x == 3"}) == "y + 9");
+    CHECK(lastValue({"x - y -> substitute, x == y, y == x"}) == "-x + y"); // all at once
+    CHECK(lastValue({"a*x -> substitute, x == 2 m"}) == "2 a m");
+    CHECK(lastValue({"x^2 -> substitute, x == a + 1; expand"}) == "a^2 + 2 a + 1");
+    CHECK(lastError({"x -> substitute"}) == "substitute needs what to replace, like substitute, x == 1");
+    CHECK(lastError({"x -> substitute, x"}) == "Write what to substitute as name == value (Ctrl+=)");
+}
+
+TEST_CASE("diff differentiates (9.6)")
+{
+    CHECK(lastValue({"x^3 -> diff, x"}) == "3 x^2");
+    CHECK(lastValue({"x^3 -> diff, x, 2"}) == "6 x");
+    CHECK(lastValue({"a*x^2 + b*x + c -> diff, x"}) == "2 a x + b");
+    CHECK(lastValue({"sin(k*x) -> diff, x"}) == "k cos(k x)");
+    CHECK(lastValue({"exp(-k*t) -> diff, t"}) == "-(k e^-(k t))");
+    CHECK(lastValue({"ln(x) -> diff, x"}) == "1/x");
+    CHECK(lastValue({"sqrt(x) -> diff, x"}) == "1/(2 sqrt(x))");
+    CHECK(lastValue({"x*sin(x) -> diff, x"}) == "x cos(x) + sin(x)");
+    CHECK(lastValue({"a^x -> diff, x"}) == "a^x ln(a)");
+    CHECK(lastValue({"atan(x) -> diff, x"}) == "1/(x^2 + 1)");
+    CHECK(lastValue({"y -> diff, x"}) == "0");
+    // The beam: deflection to slope, with the names kept.
+    CHECK(lastValue({"y(x) := P*x^2*(3*L - x)/(6*E*I)", "y(x) -> diff, x"}) == "P x*(2 L - x)/(2 E I)");
+
+    // An undefined function is beyond diff's scope: a note, not an error.
+    const Worksheet ws = sheet({"f(x) + x^2 -> diff, x"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).value == "x^2 + f(x)");
+    CHECK(last(ws).note == "Couldn't differentiate f, a function with no definition");
+
+    CHECK(lastError({"x -> diff"}) == "diff needs a variable, like diff, x");
+    CHECK(lastError({"x -> diff, x, 0"}) == "How many times to differentiate: a whole number, like 2");
+}
+
+TEST_CASE("factor takes out common factors and factors polynomials (9.3)")
+{
+    CHECK(lastValue({"6*a*x + 9*a -> factor"}) == "3 a*(2 x + 3)"); // Copy writes "*" between a name and "("
+    CHECK(lastValue({"x^2 - 5*x + 6 -> factor"}) == "(x - 3) (x - 2)");
+    CHECK(lastValue({"2*x^2 + x - 1 -> factor"}) == "(x + 1) (2 x - 1)");
+    CHECK(lastValue({"x^2 - y^2 -> factor"}) == "(x - y) (x + y)");
+    CHECK(lastValue({"x^2 + 2*x*y + y^2 -> factor"}) == "(x + y)^2");
+    CHECK(lastValue({"x^3 - 8 -> factor"}) == "(x - 2) (x^2 + 2 x + 4)");
+    CHECK(lastValue({"x^4 - y^4 -> factor"}) == "(x - y) (x + y) (x^2 + y^2)");
+    CHECK(lastValue({"x^2 - 2 -> factor"}) == "(x - sqrt(2)) (x + sqrt(2))");
+    CHECK(lastValue({"sin(t)^2 - 1 -> factor"}) == "(sin(t) - 1) (sin(t) + 1)");
+    CHECK(lastValue({"(x^2 - 1)/(x + 2) -> factor"}) == "(x - 1) (x + 1)/(x + 2)");
+
+    // What it can't factor further comes with a note.
+    const Worksheet ws = sheet({"x^2 + 1 -> factor"});
+    CHECK(last(ws).value == "x^2 + 1");
+    CHECK(last(ws).note == "Couldn't factor this further");
+    CHECK(sheet({"x^2 - 1 -> factor"}).regions().back().result.note.empty());
+}
+
+TEST_CASE("Simplify cancels the polynomial factors a fraction shares (9.1)")
+{
+    CHECK(lastValue({"(x^2 - 1)/(x - 1) ->"}) == "x + 1");
+    CHECK(lastValue({"(x^3 - 1)/(x - 1) ->"}) == "x^2 + x + 1");
+    CHECK(lastValue({"(x^2 - 5*x + 6)/(x - 2) ->"}) == "x - 3");
+    CHECK(lastValue({"(x^2 - y^2)/(x + y) ->"}) == "x - y");
+    CHECK(lastValue({"(a*x^2 - a)/(x + 1) ->"}) == "a*(x - 1)");
+    CHECK(lastValue({"(x^2 - 5*x + 6)/(x - 1) ->"}) == "(x^2 - 5 x + 6)/(x - 1)"); // nothing shared
+}
+
+TEST_CASE("solve finds every solution (9.5)")
+{
+    CHECK(lastValue({"M == s*I/c -> solve, s"}) == "s == M c/I");
+    CHECK(lastValue({"x^2 - 5*x + 6 -> solve, x"}) == "x == 3, x == 2");
+    CHECK(lastValue({"a*x^2 + b*x + c -> solve, x"}) == "x == (-b ± sqrt(b^2 - 4 a c))/(2 a)");
+    CHECK(lastValue({"F == k*d^2 -> solve, d"}) == "d == ±(sqrt(F)/sqrt(k))");
+    CHECK(lastValue({"y == exp(k*t) -> solve, t"}) == "t == ln(y)/k");
+    CHECK(lastValue({"x^2 == 2 -> solve, x"}) == "x == ±sqrt(2)");
+    CHECK(lastValue({"1/x == a -> solve, x"}) == "x == 1/a");
+    CHECK(lastValue({"ln(x) == 2 -> solve, x"}) == "x == e^2");
+    CHECK(lastValue({"2*x + 3 -> solve, x"}) == "x == -(3/2)"); // a bare expression: where it's zero
+    CHECK(lastValue({"x := 5", "x^2 == 9 -> solve, x"}) == "x == ±3"); // the variable stays a name
+    CHECK(lastValue({"P := 4 kN", "P == k*d -> solve, d"}) == "d == 4 kN/k");
+    CHECK(lastValue({"x^2 == 4*a -> solve, x; substitute, a == 4"}) == "x == ±4"); // then on each
+
+    const auto note = [](std::initializer_list<std::string> lines) {
+        const Worksheet ws = sheet(lines);
+        REQUIRE(last(ws).status == RegionResult::Status::Ok);
+        return last(ws).note;
+    };
+    CHECK(note({"x^5 + x + 1 -> solve, x"}) == "Couldn't solve this for x");
+    CHECK(note({"x^2 + 1 -> solve, x"}) == "There's no real solution for x");
+    CHECK(note({"x + 1 == x -> solve, x"}) == "There's no solution for x");
+    CHECK(note({"x == x -> solve, x"}) == "Any x is a solution");
+}
+
+TEST_CASE("integrate integrates (9.7)")
+{
+    CHECK(lastValue({"x^2 -> integrate, x"}) == "x^3/3");
+    CHECK(lastValue({"1/x -> integrate, x"}) == "ln(x)");
+    CHECK(lastValue({"3*x^2 + 2*x + 1 -> integrate, x"}) == "x^3 + x^2 + x");
+    CHECK(lastValue({"sin(k*x + p) -> integrate, x"}) == "-(cos(k x + p)/k)");
+    CHECK(lastValue({"exp(-a*t) -> integrate, t"}) == "-(e^-(a t)/a)");
+    CHECK(lastValue({"x*sin(k*x) -> integrate, x"}) == "sin(k x)/k^2 - x cos(k x)/k");
+    CHECK(lastValue({"x^2*exp(x) -> integrate, x"}) == "e^x*(x^2 - 2 x + 2)");
+    CHECK(lastValue({"1/(2*x + 1) -> integrate, x"}) == "ln(2 x + 1)/2"); // positive: no |…|
+    CHECK(lastValue({"x/(x + 1)^2 -> integrate, x"}) == "1/(x + 1) + ln(x + 1)");
+    CHECK(lastValue({"1/(x - a) -> integrate, x"}) == "ln(abs(x - a))");
+    CHECK(lastValue({"x*(x + 1) -> integrate, x"}) == "x^3/3 + x^2/2");
+    CHECK(lastValue({"w*x -> integrate, x, 0, L"}) == "w L^2/2");
+    CHECK(lastValue({"w := 2 kN/m", "L := 2.5 m", "w*x -> integrate, x, 0, L"}) == "6.25 kN*m");
+    CHECK(lastValue({"cos(x) -> integrate, x, 0, pi/2"}) == "1");
+
+    const Worksheet ws = sheet({"exp(x^2) -> integrate, x"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).value == "e^x^2");
+    CHECK(last(ws).note == "Couldn't integrate this");
+    CHECK(lastError({"x -> integrate, x, 0"}) == "integrate needs a variable, and its limits if it has them: integrate, x, 0, L");
+}
+
+TEST_CASE("A symbolic definition defines its name as the result (7.1)")
+{
+    const std::initializer_list<std::string> beam = {
+        "P := 4 kN", "L := 2.5 m", "E := 200 GPa", "I := 4166666.667 mm^4",
+        "y(x) := P*x^2*(3*L - x)/(6*E*I)",
+        "θ(x) := y(x) -> diff, x; keep, P, L, E, I",
+    };
+    const auto with = [&](const std::string& last) {
+        std::vector<std::string> lines(beam);
+        lines.push_back(last);
+        Worksheet ws;
+        double y = 0;
+        for (const std::string& line : lines) {
+            ws.addRegion(0, y, line);
+            y += 20;
+        }
+        ws.evaluate();
+        return ws;
+    };
+    // Shown after the arrow, and evaluated numerically below: the slope at the tip.
+    const Worksheet ws = with("θ(L) =");
+    CHECK(ws.regions()[5].result.value == "P x*(2 L - x)/(2 E I)");
+    CHECK(ws.regions()[5].result.kind == Statement::Kind::FunctionDefinition);
+    CHECK(ws.regions()[6].result.value == "0.015");
+    // Used in another →, as if the result had been typed.
+    CHECK(with("θ(x) -> keep, P, L, E, I").regions().back().result.value == "P x*(2 L - x)/(2 E I)");
+    CHECK(with("θ(a) ->").regions().back().result.value == "0.002 a*(-a + 5 m)/m^2"); // units tidied: m⁻²
+
+    // A variable, evaluated where it's defined: w is known numerically.
+    CHECK(lastValue({"w := 2 kN/m", "L := 2.5 m", "M_max := w*L^2/8 -> keep, w", "M_max = kN*m"}) == "1.562 kN*m");
+    // Parameters are never substituted.
+    CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(2) ="}) == "12");
+    CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(t) ->"}) == "3 t^2");
+    // Full precision, not the 3 places shown.
+    CHECK(lastValue({"k := 1/3 -> simplify", "k*3 ="}) == "1");
+
+    // An operation beyond its scope: shown with its note, and no value to use.
+    const Worksheet open = sheet({"F(x) := exp(x^2) -> integrate, x", "F(1) ="});
+    CHECK(open.regions()[0].result.status == RegionResult::Status::Ok);
+    CHECK(open.regions()[0].result.note == "Couldn't integrate this");
+    CHECK(last(open).error == "F has no closed form");
+    CHECK(lastError({"s := x^2 - 1 -> solve, x"}) == "A definition needs one result, not an equation or solutions");
+    CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
+}

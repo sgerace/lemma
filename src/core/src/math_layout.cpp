@@ -123,6 +123,11 @@ public:
             box.record(root.id, size(0));
             return box;
         }
+        case Kind::Symbolic: {
+            Box box = symbolic(root);
+            box.record(root.id, size(0));
+            return box;
+        }
         default:
             return node(root, 0);
         }
@@ -272,15 +277,18 @@ private:
                 box.append(child(n, 1, level), (script ? 0.05 : 0.15) * sz);
             } else if (n.op == '*' && n.juxtaposed) {
                 box.append(child(n, 1, level), (script ? 0.10 : 3.0 / 18.0) * sz);
+            } else if (n.op == ',') {
+                box.append(text(",", sz)); // a list of solutions
+                box.append(child(n, 1, level), 0.6 * sz);
             } else {
                 const double space = (n.op == '*' ? (script ? 0.03 : 2.0 / 18.0) : (script ? 0.08 : 4.0 / 18.0)) * sz;
-                box.append(text(n.op == '+' ? "+" : n.op == '-' ? "−" : "⋅", sz), space);
+                box.append(text(n.op == '+' ? "+" : n.op == '-' ? "−" : n.op == '~' ? "±" : "⋅", sz), space);
                 box.append(child(n, 1, level), space);
             }
             break;
         }
         case Kind::Negate:
-            box = text("−", sz);
+            box = text(n.op == '~' ? "±" : "−", sz);
             box.append(child(n, 0, level));
             break;
         case Kind::Fraction:
@@ -309,11 +317,111 @@ private:
             box.append(parenthesize(std::move(args), sz), 0.03 * sz);
             break;
         }
+        case Kind::Keyword:
+            box = keyword(n, level);
+            break;
+        case Kind::Equation:
+            box = child(n, 0, level);
+            box.append(boldEquals(sz), relationSpace());
+            box.append(child(n, 1, level), relationSpace());
+            break;
         case Kind::Definition:
         case Kind::Evaluation:
+        case Kind::Symbolic:
             return statement(n);
         }
         box.record(n.id, sz);
+        return box;
+    }
+
+    // A keyword's name, upright like a built-in function's, then its arguments: solve, σ.
+    Box keyword(const MathNode& n, int level)
+    {
+        const double sz = size(level);
+        const MathNode& name = n.children[0];
+        Box box = name.kind == Kind::Identifier ? leaf(name, level, true) : node(name, level);
+        for (std::size_t i = 1; i < n.children.size(); ++i) {
+            box.append(text(",", sz));
+            box.append(node(n.children[i], level), 0.25 * sz);
+        }
+        return box;
+    }
+
+    // An equation's equals sign, bold to tell it from an evaluation's (symbolic spec, 6.3).
+    Box boldEquals(double sz) const
+    {
+        const MathFontMetrics::Extent e = metrics_.measure("=", sz);
+        const double thickness = 0.12 * sz;
+        const double half = 0.14 * sz;
+        const double axis = c_.axisHeight * sz;
+        Box box;
+        box.width = e.width;
+        box.ascent = axis + half + thickness / 2;
+        box.descent = std::max(0.0, -(axis - half - thickness / 2));
+        for (const double centre : {-axis - half, -axis + half}) {
+            MathLayoutItem bar;
+            bar.kind = MathLayoutItem::Kind::Rule;
+            bar.x = 0.06 * sz;
+            bar.y = centre - thickness / 2;
+            bar.width = e.width - 0.12 * sz;
+            bar.height = thickness;
+            box.items.push_back(bar);
+        }
+        return box;
+    }
+
+    // expression → result, with the keywords above the arrow (symbolic spec, 6.1). With
+    // none, the keyword slot is hidden unless the region is being edited.
+    Box symbolic(const MathNode& root)
+    {
+        const double sz = size(0);
+        Box box = node(root.children[0], 0);
+
+        const bool shown = options_.showEmptyUnit
+                           || std::any_of(root.children.begin() + 1, root.children.end(),
+                                          [](const MathNode& k) { return k.kind != Kind::Placeholder; });
+        Box keywords;
+        for (std::size_t i = 1; i < root.children.size(); ++i) {
+            const MathNode& k = root.children[i];
+            if (!shown) {
+                Box empty; // not shown, but still somewhere for the caret
+                empty.record(k.id, size(1));
+                keywords.append(std::move(empty));
+                continue;
+            }
+            if (i > 1) {
+                keywords.append(text(";", size(1)));
+            }
+            keywords.append(k.kind == Kind::Identifier ? leaf(k, 1, true) : node(k, 1), i > 1 ? 0.3 * size(1) : 0.0);
+        }
+
+        const MathFontMetrics::Extent glyph = metrics_.measure("→", sz);
+        const double length = std::max(glyph.width, keywords.width + 0.4 * sz);
+        Box arrow;
+        arrow.width = length;
+        arrow.ascent = glyph.ascent;
+        arrow.descent = glyph.descent;
+        if (length > glyph.width) {
+            // A longer shaft under long keywords, ending in the arrow's head.
+            const double thickness = c_.fractionRuleThickness * sz;
+            MathLayoutItem shaft;
+            shaft.kind = MathLayoutItem::Kind::Rule;
+            shaft.x = 0.05 * sz;
+            shaft.y = -c_.axisHeight * sz - thickness / 2;
+            shaft.width = length - glyph.width * 0.6;
+            shaft.height = thickness;
+            arrow.items.push_back(shaft);
+        }
+        arrow.place(text("→", sz), length - glyph.width, 0.0);
+        const double keywordsWidth = keywords.width;
+        const double lift = glyph.ascent + 0.12 * sz + keywords.descent;
+        arrow.ascent = std::max(arrow.ascent, lift + keywords.ascent);
+        arrow.place(std::move(keywords), (length - keywordsWidth) / 2, -lift);
+        box.append(std::move(arrow), relationSpace());
+
+        if (options_.resultTree) {
+            box.append(node(*options_.resultTree, 0), relationSpace());
+        }
         return box;
     }
 

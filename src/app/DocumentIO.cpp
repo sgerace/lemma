@@ -8,12 +8,15 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
+#include <algorithm>
+
 namespace {
 
 constexpr auto kFormat = "lemma-worksheet";
-// 2: text regions; 3: plot regions; 4: math regions store their tree, not linear text.
-// Lemma is pre-release, so older versions are refused rather than migrated.
-constexpr int kVersion = 4;
+// 2: text regions; 3: plot regions; 4: math regions store their tree, not linear text;
+// 5: symbolic evaluations and equations. Lemma is pre-release, so older versions are
+// refused rather than migrated.
+constexpr int kVersion = 5;
 
 using Kind = lemma::MathNode::Kind;
 
@@ -63,20 +66,43 @@ QJsonObject toJson(const lemma::MathNode& n)
         return {{"kind", "definition"}, {"lhs", toJson(c[0])}, {"rhs", toJson(c[1])}};
     case Kind::Evaluation:
         return {{"kind", "evaluation"}, {"expr", toJson(c[0])}, {"unit", toJson(c[1])}};
+    case Kind::Symbolic: {
+        // Results are recomputed on loading, not saved (symbolic spec, section 10).
+        QJsonArray keywords;
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            keywords.append(toJson(c[i]));
+        }
+        return {{"kind", "symbolic"}, {"expr", toJson(c[0])}, {"keywords", keywords}};
+    }
+    case Kind::Keyword: {
+        QJsonArray args;
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            args.append(toJson(c[i]));
+        }
+        return {{"kind", "keyword"}, {"name", toJson(c[0])}, {"args", args}};
+    }
+    case Kind::Equation:
+        return {{"kind", "equation"}, {"lhs", toJson(c[0])}, {"rhs", toJson(c[1])}};
     }
     return {};
 }
 
 struct BadTree {};
 
-lemma::MathNode fromJson(const QJsonValue& value, bool root = false)
+// Where a node is, which decides what it may be: a statement only as the whole region,
+// a keyword only in a symbolic evaluation's keyword slots, and an equation only as a
+// whole slot.
+enum class Place { Root, Expression, KeywordSlot, Argument, DefinitionValue, Other };
+
+lemma::MathNode fromJson(const QJsonValue& value, Place place = Place::Other)
 {
+    const bool root = place == Place::Root;
     if (!value.isObject()) {
         throw BadTree{};
     }
     const QJsonObject o = value.toObject();
     const QString kind = o.value("kind").toString();
-    const auto slot = [&](const char* name) { return fromJson(o.value(name)); };
+    const auto slot = [&](const char* name, Place p = Place::Other) { return fromJson(o.value(name), p); };
     const auto text = [&] {
         const std::string t = o.value("text").toString().toStdString();
         if (t.empty()) {
@@ -111,8 +137,37 @@ lemma::MathNode fromJson(const QJsonValue& value, bool root = false)
         return call;
     }
     // A definition or evaluation is only ever a whole region.
-    if (root && kind == "definition") return lemma::MathNode(Kind::Definition, {slot("lhs"), slot("rhs")});
+    if (root && kind == "definition") {
+        return lemma::MathNode(Kind::Definition, {slot("lhs"), slot("rhs", Place::DefinitionValue)});
+    }
     if (root && kind == "evaluation") return lemma::MathNode(Kind::Evaluation, {slot("expr"), slot("unit")});
+    if ((root || place == Place::DefinitionValue) && kind == "symbolic") {
+        lemma::MathNode symbolic(Kind::Symbolic, {slot("expr", Place::Expression)});
+        for (const QJsonValue& k : o.value("keywords").toArray()) {
+            symbolic.children.push_back(fromJson(k, Place::KeywordSlot));
+        }
+        const bool named = std::all_of(symbolic.children.begin() + 1, symbolic.children.end(), [](const auto& k) {
+            return k.kind == Kind::Placeholder || k.kind == Kind::Identifier || k.kind == Kind::Keyword;
+        });
+        if (symbolic.children.size() < 2 || !named) {
+            throw BadTree{};
+        }
+        return symbolic;
+    }
+    if (place == Place::KeywordSlot && kind == "keyword") {
+        lemma::MathNode keyword(Kind::Keyword, {slot("name")});
+        for (const QJsonValue& arg : o.value("args").toArray()) {
+            keyword.children.push_back(fromJson(arg, Place::Argument));
+        }
+        const Kind name = keyword.children[0].kind;
+        if (keyword.children.size() < 2 || (name != Kind::Identifier && name != Kind::Placeholder)) {
+            throw BadTree{};
+        }
+        return keyword;
+    }
+    if ((root || place == Place::Expression || place == Place::Argument) && kind == "equation") {
+        return lemma::MathNode(Kind::Equation, {slot("lhs"), slot("rhs")});
+    }
     throw BadTree{};
 }
 
@@ -211,7 +266,7 @@ bool load(lemma::Worksheet& worksheet, const QString& path, QString* error)
         if (type == "math") {
             lemma::MathNode math;
             try {
-                math = fromJson(r.value("math"), true);
+                math = fromJson(r.value("math"), Place::Root);
             } catch (const BadTree&) {
                 *error = QObject::tr("This worksheet is damaged: a math region can't be read.");
                 return false;

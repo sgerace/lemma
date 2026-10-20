@@ -15,7 +15,7 @@ namespace lemma {
 namespace {
 
 struct Token {
-    enum class Kind { Number, Identifier, Op, LParen, RParen, Comma, Assign, Equals, End };
+    enum class Kind { Number, Identifier, Op, LParen, RParen, Comma, Semicolon, Assign, Equals, Equation, Arrow, End };
 
     Token(Kind k, std::size_t b, std::size_t e) : kind(k), begin(b), end(e) {}
 
@@ -39,6 +39,8 @@ constexpr Alias kAliases[] = {
     {"÷", Token::Kind::Op, '/'},
     {"−", Token::Kind::Op, '-'},
     {"≔", Token::Kind::Assign, 0},
+    {"→", Token::Kind::Arrow, 0},
+    {"⩵", Token::Kind::Equation, 0},
 };
 
 const Alias* aliasAt(std::string_view src, std::size_t i)
@@ -113,9 +115,17 @@ std::vector<Token> tokenize(std::string_view src)
             continue;
         }
 
-        if (src.substr(i).starts_with(":=")) {
-            tokens.push_back({Token::Kind::Assign, i, i + 2});
-            i += 2;
+        bool matched = false;
+        for (const auto& [text, kind] : {std::pair{":=", Token::Kind::Assign}, std::pair{"->", Token::Kind::Arrow},
+                                         std::pair{"==", Token::Kind::Equation}}) {
+            if (src.substr(i).starts_with(text)) {
+                tokens.push_back({kind, i, i + 2});
+                i += 2;
+                matched = true;
+                break;
+            }
+        }
+        if (matched) {
             continue;
         }
 
@@ -132,6 +142,7 @@ std::vector<Token> tokenize(std::string_view src)
         case '(': t.kind = Token::Kind::LParen; break;
         case ')': t.kind = Token::Kind::RParen; break;
         case ',': t.kind = Token::Kind::Comma; break;
+        case ';': t.kind = Token::Kind::Semicolon; break;
         case '=': t.kind = Token::Kind::Equals; break;
         default:
             throw Error("Unexpected character '" + std::string(1, src[i]) + "'", i, i + 1);
@@ -159,6 +170,7 @@ public:
             s.name = next().text;
             s.assignPos = next().begin;
             s.expr = expression();
+            symbolicDefinition(s);
         } else if (isFunctionDefinition()) {
             s.kind = Statement::Kind::FunctionDefinition;
             s.name = next().text;
@@ -171,10 +183,14 @@ public:
             expect(Token::Kind::RParen, "Expected ')'");
             s.assignPos = expect(Token::Kind::Assign, "Expected ':='").begin;
             s.expr = expression();
+            symbolicDefinition(s);
         } else {
             s.kind = Statement::Kind::Expression;
-            s.expr = expression();
-            if (peek().kind == Token::Kind::Equals) {
+            s.expr = relation();
+            if (accept(Token::Kind::Arrow)) {
+                s.kind = Statement::Kind::Symbolic;
+                keywords(s);
+            } else if (peek().kind == Token::Kind::Equals) {
                 s.kind = Statement::Kind::Evaluation;
                 s.equalsPos = next().begin;
                 if (peek().kind != Token::Kind::End) {
@@ -251,6 +267,40 @@ private:
         n->end = rhs->end;
         n->args = {std::move(lhs), std::move(rhs)};
         return n;
+    }
+
+    // A definition's value may be a symbolic evaluation: θ(x) := y(x) -> diff, x
+    void symbolicDefinition(Statement& s)
+    {
+        if (accept(Token::Kind::Arrow)) {
+            s.symbolic = true;
+            keywords(s);
+        }
+    }
+
+    // keywords := [keyword {';' keyword}]      keyword := name {',' relation}
+    void keywords(Statement& s)
+    {
+        if (peek().kind == Token::Kind::End) {
+            return;
+        }
+        do {
+            Keyword k{expect(Token::Kind::Identifier, "Expected a keyword").text, {}};
+            while (accept(Token::Kind::Comma)) {
+                k.args.push_back(relation());
+            }
+            s.keywords.push_back(std::move(k));
+        } while (accept(Token::Kind::Semicolon));
+    }
+
+    // relation := expression ['==' expression]      an equation, for symbolic evaluation
+    NodePtr relation()
+    {
+        NodePtr lhs = expression();
+        if (accept(Token::Kind::Equation)) {
+            return makeBinary('=', lhs, expression());
+        }
+        return lhs;
     }
 
     // expression := term (('+' | '-') term)*

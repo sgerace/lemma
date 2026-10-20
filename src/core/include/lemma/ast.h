@@ -20,9 +20,15 @@ struct Node {
 
     double number = 0.0;       // Number
     std::string name;          // Identifier, Call
-    char op = 0;               // Unary: '-'; Binary: '+', '-', '*', '/', '^'
+    char op = 0;               // Unary: '-'; Binary: '+', '-', '*', '/', '^', and '=' for an equation (==)
     bool juxtaposed = false;   // Binary '*' written without an operator: "10 N"
     std::vector<NodePtr> args; // Unary: operand; Binary: lhs, rhs; Call: arguments
+};
+
+// A keyword of a symbolic evaluation: `simplify`, or `solve, σ`.
+struct Keyword {
+    std::string name;
+    std::vector<NodePtr> args;
 };
 
 // The content of one math region.
@@ -33,6 +39,7 @@ struct Statement {
         Definition,         // x := 2 m
         FunctionDefinition, // f(x) := x^2
         Evaluation,         // x + 1 =   or   x + 1 = ft
+        Symbolic,           // x^2 - 1 ->   or   M == σ*I/c -> solve, σ
     };
 
     Kind kind = Kind::Empty;
@@ -43,6 +50,8 @@ struct Statement {
     std::size_t equalsPos = 0;       // Evaluation: byte offset of '='
     std::size_t assignPos = 0;       // Definition, FunctionDefinition: byte offset of ':='
     std::string unitText;            // Evaluation: display unit as typed
+    std::vector<Keyword> keywords;   // Symbolic, and a symbolic definition's, in the order they apply
+    bool symbolic = false;           // Definition, FunctionDefinition: defined as expr -> keywords
 };
 
 } // namespace lemma

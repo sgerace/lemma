@@ -272,10 +272,18 @@ const lemma::MathLayout& WorksheetCanvas::mathLayout(const lemma::Region& r) con
             options.resultNumber = r.result.number;
             options.resultUnit = r.result.unit ? &*r.result.unit : nullptr;
         }
+        if (r.result.status == lemma::RegionResult::Status::Ok && r.result.symbolic) {
+            options.resultTree = &*r.result.symbolic;
+        }
         options.showEmptyUnit = r.id == editingId_;
         it = layouts_.emplace(r.id, lemma::layoutMath(r.math, MathFont::instance(), options)).first;
     }
     return it->second;
+}
+
+bool WorksheetCanvas::showsNote(const lemma::Region& r) const
+{
+    return r.result.status == lemma::RegionResult::Status::Ok && !r.result.note.empty();
 }
 
 bool WorksheetCanvas::showsError(const lemma::Region& r) const
@@ -352,9 +360,10 @@ QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
 
     const lemma::MathLayout& layout = mathLayout(r);
     QRectF rect(r.x, r.y - layout.ascent, std::max(layout.width, 4.0), layout.ascent + layout.descent);
-    if (showsError(r)) {
+    if (showsError(r) || showsNote(r)) {
         const QFontMetricsF efm(errorFont_);
-        rect.setWidth(std::max(rect.width(), efm.horizontalAdvance(fromUtf8(r.result.error))));
+        const std::string& text = showsError(r) ? r.result.error : r.result.note;
+        rect.setWidth(std::max(rect.width(), efm.horizontalAdvance(fromUtf8(text))));
         rect.setHeight(rect.height() + efm.height() + 4);
     }
     return rect;
@@ -612,6 +621,13 @@ void WorksheetCanvas::paintMathRegion(QPainter& painter, const lemma::Region& r,
         painter.setFont(errorFont_);
         const QFontMetricsF efm(errorFont_);
         painter.drawText(QPointF(r.x, r.y + layout.descent + 4 + efm.ascent()), fromUtf8(r.result.error));
+    }
+    if (showsNote(r)) {
+        // What an operation couldn't do: in the error's place, but not an error.
+        painter.setPen(kHintColor);
+        painter.setFont(errorFont_);
+        const QFontMetricsF efm(errorFont_);
+        painter.drawText(QPointF(r.x, r.y + layout.descent + 4 + efm.ascent()), fromUtf8(r.result.note));
     }
 
     if (onScreen && selection_.contains(r.id)) {
@@ -1005,6 +1021,28 @@ void WorksheetCanvas::copyMath(bool cut)
     }
 }
 
+void WorksheetCanvas::copyResult(const lemma::Region& r)
+{
+    const lemma::RegionResult& result = r.result;
+    std::string text;
+    if (result.status == lemma::RegionResult::Status::Ok && result.symbolic) {
+        text = lemma::toLinear(*result.symbolic);
+    } else if (result.status == lemma::RegionResult::Status::Ok && result.kind == lemma::Statement::Kind::Evaluation) {
+        // The number with its unit: the one typed, or the one it's shown in.
+        text = result.number;
+        const lemma::MathNode& unit = r.math.children[1];
+        if (unit.kind != lemma::MathNode::Kind::Placeholder) {
+            text += " " + lemma::toLinear(unit);
+        } else if (result.unit) {
+            text += " " + lemma::toLinear(*result.unit);
+        }
+    } else {
+        emit message(tr("This region has no result to copy."));
+        return;
+    }
+    QGuiApplication::clipboard()->setText(fromUtf8(text));
+}
+
 std::function<lemma::MathEditor::Change(lemma::MathEditor&)> WorksheetCanvas::pasteCommand()
 {
     // Pasting parses linear text; it doesn't replay it as keystrokes (section 10).
@@ -1280,8 +1318,26 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         selectAll();
         return;
     }
+    const bool control = event->modifiers() & Qt::ControlModifier;
+    if (control && (event->modifiers() & Qt::ShiftModifier) && event->key() == Qt::Key_C) {
+        // Copy Result, from the region being edited or the one selected.
+        const int id = editingId_ ? editingId_ : selection_.size() == 1 ? *selection_.begin() : 0;
+        const lemma::Region* r = worksheet_.region(id);
+        if (r && r->kind == lemma::Region::Kind::Math) {
+            copyResult(*r);
+        }
+        return;
+    }
     if (editingId_ && math_) {
         using Editor = lemma::MathEditor;
+        if (control && event->key() == Qt::Key_Period) {
+            editMath([](Editor& e) { return e.type("→"); }); // symbolic evaluation, as in Mathcad
+            return;
+        }
+        if (control && event->key() == Qt::Key_Equal) {
+            editMath([](Editor& e) { return e.type("⩵"); }); // an equation's equals sign
+            return;
+        }
         if (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) {
             copyMath(event->matches(QKeySequence::Cut));
             return;

@@ -74,6 +74,21 @@ std::string show(const MathNode& n, const MathCaret& caret)
     case MathNode::Kind::Evaluation:
         s = show(n.children[0], caret) + " = " + show(n.children[1], caret);
         break;
+    case MathNode::Kind::Symbolic:
+        s = show(n.children[0], caret) + " → ";
+        for (std::size_t i = 1; i < n.children.size(); ++i) {
+            s += (i > 1 ? "; " : "") + show(n.children[i], caret);
+        }
+        break;
+    case MathNode::Kind::Keyword:
+        s = show(n.children[0], caret);
+        for (std::size_t i = 1; i < n.children.size(); ++i) {
+            s += ", " + show(n.children[i], caret);
+        }
+        break;
+    case MathNode::Kind::Equation:
+        s = show(n.children[0], caret) + " ⩵ " + show(n.children[1], caret);
+        break;
     }
     if (caret.node == n.id && caret.selected) {
         s = caret.side == MathCaret::Side::Left ? "|⟨" + s + "⟩" : "⟨" + s + "⟩|";
@@ -425,7 +440,7 @@ public:
 const SimpleMetrics kSimpleMetrics;
 
 // The shape every tree must keep, whatever is typed.
-void checkTree(const MathNode& n, bool root)
+void checkTree(const MathNode& n, bool root, const MathNode* parent = nullptr, std::size_t index = 0)
 {
     using K = MathNode::Kind;
     INFO(toLinear(n));
@@ -447,6 +462,27 @@ void checkTree(const MathNode& n, bool root)
         REQUIRE(root); // statements are only ever the whole region
         expected = 2;
         break;
+    case K::Symbolic:
+        // The region, or a definition's value (7.1).
+        REQUIRE((root || (parent->kind == K::Definition && index == 1)));
+        REQUIRE(n.children.size() >= 2);
+        for (std::size_t i = 1; i < n.children.size(); ++i) {
+            const K k = n.children[i].kind;
+            REQUIRE((k == K::Placeholder || k == K::Identifier || k == K::Keyword));
+        }
+        expected = n.children.size();
+        break;
+    case K::Keyword:
+        REQUIRE((parent && parent->kind == K::Symbolic && index >= 1));
+        REQUIRE(n.children.size() >= 2);
+        REQUIRE((n.children[0].kind == K::Identifier || n.children[0].kind == K::Placeholder));
+        expected = n.children.size();
+        break;
+    case K::Equation:
+        // Only a whole slot is an equation: the region, the expression, or an argument.
+        REQUIRE((root || (parent->kind == K::Symbolic && index == 0) || (parent->kind == K::Keyword && index >= 1)));
+        expected = 2;
+        break;
     case K::Negate:
     case K::Radical:
     case K::Group:
@@ -459,8 +495,8 @@ void checkTree(const MathNode& n, bool root)
         break;
     }
     REQUIRE(n.children.size() == expected);
-    for (const MathNode& c : n.children) {
-        checkTree(c, false);
+    for (std::size_t i = 0; i < n.children.size(); ++i) {
+        checkTree(n.children[i], false, &n, i);
     }
 }
 
@@ -493,7 +529,7 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
 {
     const char* keys[] = {"a", "b", "x", "2", "1", ".", "e", "+", "-", "*", "/", "^", "(", ")", ",", "\\",
                           ":", "=", "{space}", "{shift-space}", "{left}", "{right}", "{home}", "{end}", "{bs}",
-                          "{del}", "{ins}", "{tab}", "{shift-tab}", "f(", "_"};
+                          "{del}", "{ins}", "{tab}", "{shift-tab}", "f(", "_", "→", "⩵", ";", "solve,"};
     std::uint32_t seed = 12345;
     const auto random = [&](std::size_t n) {
         seed = seed * 1664525u + 1013904223u; // a fixed sequence, so failures reproduce
@@ -509,12 +545,15 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
             ::keys(e, key);
             checkEditor(e);
             if (random(20) == 0) {
-                e.paste(mathFromLinear("(p + 1)/q"));
+                e.paste(mathFromLinear(random(2) == 0 ? "(p + 1)/q" : "p == q"));
                 checkEditor(e);
             }
         }
-        // It lays out, and every stop has a place a click can find again.
-        const MathLayout layout = layoutMath(e.root(), kSimpleMetrics);
+        // It lays out as it does while being edited, and every stop has a place a click
+        // can find again.
+        MathLayoutOptions editing;
+        editing.showEmptyUnit = true;
+        const MathLayout layout = layoutMath(e.root(), kSimpleMetrics, editing);
         for (const MathCaret& stop : mathStops(e.root())) {
             REQUIRE(layout.box(stop.node));
             const MathCaretGeometry g = layout.caretGeometry(stop);
@@ -539,4 +578,81 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
             REQUIRE(findMathNode(e.root(), err.node()));
         }
     }
+}
+
+// Symbolic evaluation's editing, from docs/symbolic-spec.md, section 6.
+
+TEST_CASE("Ctrl+. makes a symbolic evaluation, with the caret on the keyword (6.2)")
+{
+    CHECK(typed("x^2{right}+1→") == "x^[2] + 1 → |■");
+    CHECK(typed("a+b{left}→") == "a + b → |■"); // the whole region, wherever the caret is
+    CHECK(typed("→") == "|■");                  // nothing to evaluate
+    CHECK(typed("x:→") == "x := |■");           // nothing to evaluate yet
+    CHECK(typed("f(x):x^2{right}→diff,x") == "f(x) := x^[2] → diff, x|"); // a definition's value (7.1)
+    CHECK(typed("f(x):x^2{right}→{bs}") == "f(x) := x^[2]|");
+    CHECK(typed("x→simplify") == "x → simplify|");
+}
+
+TEST_CASE("A keyword's arguments follow a comma, and ; starts another keyword (6.2)")
+{
+    CHECK(typed("x→solve,x") == "x → solve, x|");
+    CHECK(typed("x→substitute,a,b") == "x → substitute, a, b|");
+    CHECK(typed("x→keep,P;diff,x") == "x → keep, P; diff, x|");
+    CHECK(typed("x→;") == "x → ■; |■");
+    // A keyword is a name: no operators, parentheses or numbers in it.
+    CHECK(typed("x→so+") == "x → so|");
+    CHECK(typed("x→so(") == "x → so|");
+    CHECK(typed("x→2") == "x → |■");
+    // Its arguments are ordinary slots.
+    CHECK(typed("x→solve,x^2") == "x → solve, x^[2|]");
+}
+
+TEST_CASE("Backspace and Delete take keywords, then the arrow, away (6.2)")
+{
+    CHECK(typed("x→{bs}") == "x|");
+    CHECK(after("x ->", "{bs}") == "x|");
+    CHECK(typed("x→ab{bs}{bs}{bs}") == "x|");
+    CHECK(typed("x→solve,{bs}") == "x → solve|");
+    CHECK(typed("x→a;{bs}") == "x → a|");
+    CHECK(typed("x→a{home}{right}{del}") == "x → |⟨a⟩");
+    CHECK(after("x ->", "{home}{right}{del}") == "x|");
+}
+
+TEST_CASE("Ctrl+= makes the whole slot an equation's left side (6.3)")
+{
+    CHECK(typed("a+b⩵c") == "a + b ⩵ c|");
+    CHECK(typed("a+b{left}⩵c") == "a + b ⩵ c|");
+    CHECK(typed("a⩵b→") == "a ⩵ b → |■");
+    CHECK(typed("a→solve,x⩵2") == "a → solve, x ⩵ 2|");
+    CHECK(typed("a⩵b⩵") == "a ⩵ b|");  // one equals sign to an equation
+    CHECK(typed("a⩵b=") == "a ⩵ b|");  // and it isn't evaluated numerically
+    CHECK(typed("x:a⩵") == "x := a|"); // nor defined
+    CHECK(typed("a⩵{bs}") == "a|");
+    CHECK(after("a == b", "{home}{right}{del}") == "a ⩵ |⟨b⟩");
+}
+
+TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
+{
+    for (const char* source : {"x^2 - 1 ->", "x^2 - 5*x + 6 -> factor", "M == σ*I/c -> solve, σ",
+                               "θ(x) := y(x) -> diff, x", "M_max := w*L^2/8 -> keep, w",
+                               "y -> keep, P, L; diff, x", "f(x) -> substitute, x == 2"}) {
+        CHECK(toLinear(mathFromLinear(source)) == source);
+    }
+    CHECK(toLinear(mathFromLinear("a ⩵ b → simplify")) == "a == b -> simplify");
+    const Statement s = lowerMath(mathFromLinear("M == σ*I/c -> solve, σ; simplify"));
+    CHECK(s.kind == Statement::Kind::Symbolic);
+    REQUIRE(s.keywords.size() == 2);
+    CHECK(s.keywords[0].name == "solve");
+    CHECK(s.keywords[0].args.size() == 1);
+    CHECK(s.keywords[1].name == "simplify");
+    CHECK_THROWS(mathFromLinear("x -> 2"));
+    CHECK(mathFromLinear("x := 1 -> simplify").children[1].kind == MathNode::Kind::Symbolic);
+
+    // An empty keyword copies as none; an equation pastes only as a whole slot.
+    MathEditor e;
+    keys(e, "x^2→");
+    CHECK(e.copy() == "x^2 ->");
+    MathEditor sum;
+    keys(sum, "a+");
+    CHECK(sum.paste(mathFromLinear("p == q")) == MathEditor::Change::None);
 }

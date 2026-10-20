@@ -73,6 +73,9 @@ private:
     Change typeComma();
     Change typeRadical();
     Change typeStatement(char op);
+    Change typeSymbolic();  // Ctrl+., or "→"
+    Change typeEquation();  // Ctrl+=, or "⩵"
+    Change typeSemicolon(); // another keyword
     Change erase(bool before);
     Change eraseAtLeftEdge(int id);
     Change eraseAtRightEdge(int id);

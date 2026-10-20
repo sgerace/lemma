@@ -1,7 +1,7 @@
 # Symbolic math: design
 
-Status: **agreed** (issue #16). Nothing here is implemented yet; section 13 is the
-plan. Change this note along with the engine.
+Status: **agreed and implemented** (issue #16), in the steps of section 13. Change this
+note along with the engine.
 
 Lemma evaluates numerically: every expression becomes a `Quantity`. This note adds
 Mathcad's symbolic evaluation operator, `→`, which returns an expression instead of
@@ -20,7 +20,7 @@ before plugging numbers in. The result is typeset with the 2D layout from #7.
 | Assumptions | Free symbols are positive reals; the keyword `real` opts a name out | 5.3 |
 | Symbolic definitions | `θ(x) := y(x) → diff, x` defines a function from a symbolic result, to evaluate or plot | 7.1 |
 | Units | Unit names are symbols with known dimensions, kept as typed and combined like other powers; mismatches are errors, as in numeric evaluation | 8 |
-| Conversion | Tree ↔ engine expressions, with each engine node's origin, so errors name a node | 4 |
+| Conversion | Tree ↔ engine expressions; errors name the tree node they arise in | 4 |
 | Storage | The `→` statement is a new root node, so `.lemma` goes to version 5. Results are recomputed, not stored | 10 |
 | Numbers | Exact arithmetic throughout, shown as decimals once a decimal number is involved | 5.2 |
 | First cut | All seven keywords, each within a documented scope (section 9), and symbolic definitions | 9, 12, 13 |
@@ -90,9 +90,9 @@ dimensionally sound.
 
 ## 4. The bridge
 
-**Tree to `Expr`.** Lowering works like numeric lowering (`lowerMath`): each `Expr`
-built from a `MathNode` records the node's id as its origin, so an error ("Units don't
-match", "Can't divide by zero") underlines the right part of the region. Groups
+**Tree to `Expr`.** Lowering works like numeric lowering (`lowerMath`), node by node,
+and an error raised while building a node's expression ("Units don't match",
+"Division by zero") names that node, so it underlines the right part of the region. Groups
 disappear, fractions become products with negative exponents, radicals become
 exponent ½, and juxtaposition is multiplication.
 
@@ -112,9 +112,8 @@ forms:
 | Number | an exact `Rational`, or a decimal (section 5.2) | `3/8`, `2.5` |
 | Symbol | a name, and what it is: a variable, a unit (with its `Dimension`), or a constant (π, e, g) | `L`, `kN`, `π` |
 | Sum | a numeric term plus terms with coefficients | `3 + 2 x − y` |
-| Product | a numeric coefficient times factors, each a base raised to a `Rational` exponent | `3/8 w L⁴ E⁻¹ I⁻¹` |
-| Power | a base raised to an expression exponent, when the exponent isn't a number | `2ˣ`, `e^(k t)` |
-| Function | an elementary function applied to an expression | `sin(θ)`, `ln(x)` |
+| Product | a numeric coefficient times factors, each a base raised to an exponent (a number, or any expression); a single power is a product of one factor | `3/8 w L⁴ E⁻¹ I⁻¹`, `x²`, `e^(k t)` |
+| Function | an elementary function applied to an expression: sin, cos, tan, asin, acos, atan, ln, log and abs (√ and exp are powers) | `sin(θ)`, `ln(x)`, `\|x − y\|` |
 | Call | an undefined function applied to arguments, kept as is | `f(x)` |
 
 ### 5.2 Canonical form
@@ -127,7 +126,12 @@ can be compared and hashed:
   `x⁵`; `√x · √x` is `x`).
 - A sum's terms and a product's factors are kept in a fixed total order. This is the
   storage order only; the display order is chosen separately (section 11).
-- Integers and fractions are exact. A number typed with a decimal point is exact too
+- A multiple of a sum is multiplied out inside a sum (`1 − (z + 3)` is `−z − 2`),
+  but kept on its own (`2 (x + 1)`).
+- Number roots are reduced: `√8` is `2 √2`, `√2 · √6` is `2 √3`.
+- Integers and fractions are exact. A number too large for an exact fraction (64-bit
+  numerator and denominator) becomes a decimal, as does anything computed from one.
+- A number typed with a decimal point (or in scientific notation) is exact too
   (2.5 is 5/2), but marked as decimal, and a result coefficient with decimal input
   in it is shown as a decimal to the worksheet's precision (`2.5 x` stays `2.5 x`,
   not `5/2 x`). This matches what people expect from Mathcad.
@@ -135,7 +139,9 @@ can be compared and hashed:
 ### 5.3 Built-in assumptions
 
 Symbols are positive reals. So `√(x²)` is `x`, `ln(a b)` can be `ln(a) + ln(b)`,
-and `(a b)^(1/2)` is `√a √b`. This is the one deliberate departure from a
+and `(a b)^(1/2)` is `√a √b`. Sums aren't assumed positive: `√((x − y)²)` is
+`|x − y|`, and a root splits only over the factors known to be positive, so
+`√(x (y − 1)(y − 2))` is `√x √((y − 1)(y − 2))`. This is the one deliberate departure from a
 general-purpose CAS (Mathcad's symbols are complex until `assume` says otherwise): it
 is right for lengths, loads and moduli, and it is what keeps results short.
 
@@ -155,7 +161,8 @@ What limits the risk:
 
 ### 6.1 The statement
 
-A symbolic evaluation is a new root node, `Symbolic`, with three slots:
+A symbolic evaluation is a new root node, `Symbolic`, with an expression, one or more
+keyword slots, and a computed result:
 
 ```
 expression  →  result         keyword above the arrow when given:   solve, σ
@@ -163,9 +170,12 @@ expression  →  result         keyword above the arrow when given:   solve, σ
 ```
 
 - **expression**: any expression, or an equation (6.3).
-- **keyword**: a placeholder when none is given. It is shown above the arrow while
-  the region is edited, and hidden when empty, as an evaluation's unit slot is
-  (editor spec, section 8.4).
+- **keywords**: one slot to start with, a placeholder when none is given; `;` adds
+  another. A slot holds a keyword's name (`simplify`), or a `Keyword` node: a name
+  and one or more arguments (`solve, σ`). The keywords are shown above the arrow,
+  smaller, the arrow lengthening to fit, and hidden when all are empty and the region
+  isn't being edited, as an evaluation's unit slot is (editor spec, section 8.4). Like
+  a function's name, a keyword's name takes only letters, digits and `_`.
 - **result**: computed, not a slot and not a stop, like a numeric result.
 
 ### 6.2 Keys
@@ -215,8 +225,12 @@ As in Mathcad, a name defined above the region is replaced by its definition:
   function's body sees the definitions above *its* definition, as numerically
   (closure snapshot).
 - **Built-in functions** (sin, ln, …) are the elementary functions of section 5.1;
-  `min`, `max` and `abs` are kept as calls.
-- **Opting out.** The keyword `keep, L, P` leaves the names after it symbolic. It
+  `min` and `max` are kept as calls.
+- **Calls on values.** `M (h/2)`, with `M` a value, is a product, as numerically.
+- **Errors** in a definition's value are reported on the name that used it, with the
+  name: "In P: Units don't match: m and kg".
+- **Opting out.** The keyword `keep, L, P` leaves the names after it symbolic, in
+  inlined function bodies too; `keep, f` leaves a function's calls as calls. It
   combines with another keyword (6.2): `keep, P; diff, x`. Mathcad's idiom of
   redefining a name as itself (`x := x`) also works, since substitution then gives
   `x` back.
@@ -243,6 +257,14 @@ A definition's right-hand side may be a symbolic evaluation:
 - **Beyond scope.** When the operation couldn't finish (an integral left unevaluated),
   the definition still shows the result with its note, and using the name numerically
   is an error at the use: "θ has no closed form". Numeric integration comes later.
+- **One result.** A definition takes one expression: `solve`'s solutions, or an
+  equation, are an error on the definition.
+- **Precision.** The name is defined as the result to full precision, not to the
+  worksheet's three places shown: `k := 1/3 → simplify` then `k·3 =` is `1`. The
+  result's units are known, so later regions use them as units whatever is free.
+- **Numerically**, a function is defined as the result, evaluated at each call; a
+  variable is evaluated where it's defined, and if it has free names it has no number
+  ("M is not defined" where used), though symbolic regions below can still use it.
 - **Variables** work the same way: `M_max := w L²/8 → keep, w` defines `M_max` as
   the expression, which evaluates numerically wherever `w` is defined.
 - Errors in the symbolic step are reported on the definition, and later uses of the
@@ -250,14 +272,40 @@ A definition's right-hand side may be a symbolic evaluation:
 
 ## 8. Units
 
-- A name that means a unit (as the evaluator decides, `Lookup::VariablesFirst`) becomes
-  a unit Symbol with its `Dimension`. A name with no definition and no unit meaning is
-  a plain symbol, whose dimension is unknown.
+- **Which names are units.** Several unit names are also everyday variable names
+  (`L` is a litre, and `C`, `N`, `A`, `K`, `R`, `s` and `m` are units too), so a name
+  the worksheet doesn't define is a unit only where it's used as one: multiplied
+  right after a number, or after another such unit (`2.5 m`, `4 kN·m`, `9.81 m/s²`,
+  `2 m·3 m`), in an expression whose other names all have values. That holds for the
+  region's expression and for each definition's value as it's substituted
+  (`P := 4 kN`), whose names are read in the definition's own place. A function's
+  parameters have values for this purpose: `f(x) := x + 2 m` has units.
+  - An expression with free names is a derivation, and its unit names are names
+    too: in `½ m v²`, `m` is a mass, and in `P x² (3 L − x)`, `L` is a length. So
+    is `L` in `w L⁴/(8 E I)`, after no number at all.
+  - So `2 m + 3 mm →` is `2.003 m`, and with `P := 4 kN` above, `P x →` is
+    `4 x kN`; but `2.5 m·x →`, with `x` free, has a name `m` in it. (`keep`
+    makes a name free, with the same effect.)
+  - A unit becomes a unit Symbol with its `Dimension` and size. Anywhere else the
+    name is a plain symbol, whose dimension is unknown.
 - Units are kept as typed and combine like any factor: `2 m · 3 m` is `6 m²`, and
   `4 kN · 2.5 m` is `10 kN·m`.
 - Terms of the same dimension in different units are converted to the unit of the
   first term: `2 m + 3 mm` is `2.003 m`. The factor is exact when the units' sizes are
-  (mm is 1/1000 m); otherwise it's a decimal.
+  (mm is 1/1000 m); otherwise it's a decimal. Either way the converted number shows
+  as a decimal.
+- **Three or more units that partly cancel** in a product become SI units for what's
+  left, or its named unit: `kN/(GPa·mm⁴)` is `m⁻²` with a factor.
+- **Within a product**, units of one dimension become the first of them (`m·mm` is
+  `0.001 m²`), and units whose product has the dimension of one of them become that
+  one: with the cantilever's values, `P L³/(3 E I)` is
+  `kN·m³/(GPa·mm⁴)`, a length, so `0.025 m`. Units whose product has no dimension
+  disappear (`1 cm/(1 mm)` is `10`). Otherwise they're kept as typed: `kN·m`,
+  `kN/m`, `m/s²`.
+- **Measurements show as decimals**: a number with units that isn't a whole number is
+  shown as a decimal (`4.167×10⁶ mm⁴`, not `12500000/3 mm⁴`).
+- Angles in `deg` or `rad` are numbers inside functions: `sin(30 deg)` is `1/2`.
+- `g` is the constant for gravity, as numerically, unless it's defined.
 - **Checking.** Adding terms whose dimensions are known and different is an error with
   the numeric evaluator's message (`1 m + 1 kg`: "Units don't match: m and kg").
   Terms with an unknown dimension (anything with a plain symbol in it) can't be
@@ -275,11 +323,18 @@ factor this further"). That is not an error: the region still counts as evaluate
 The canonical form, plus:
 
 - Cancelling common factors of a fraction's numerator and denominator, including
-  polynomial factors found by `factor` (`(x² − 1)/(x − 1)` is `x + 1`).
+  polynomial factors found by `factor` (`(x² − 1)/(x − 1)` is `x + 1`). The
+  numerator and denominator are factored only to cancel: when they share no factor,
+  they're left as they were, and what's left after cancelling is multiplied out again
+  (`(x³ − 1)/(x − 1)` is `x² + x + 1`).
 - Combining fractions over a common denominator when that makes the result shorter.
 - `sin²θ + cos²θ = 1`; `e^(ln x) = x`; `ln(e^x) = x`; values at standard angles
   (`sin(π/6) = 1/2`).
-- Choosing between expanded and factored forms by a size measure: the shorter wins.
+- Choosing the shortest of these forms by a size measure (a count of the expression's
+  parts): the sum as it is, over common denominators, multiplied out (up to 200
+  terms), and with what its terms have in common taken out, so that the sum left has
+  whole coefficients: `P x L − P x²/2` is `P x (2 L − x)/2`. On a tie, the terms over
+  common denominators.
 
 ### 9.2 `expand`
 
@@ -296,9 +351,21 @@ than a few thousand terms is an error ("This expands to too many terms").
 - Recognizes `a² − b²`, `a² ± 2ab + b²`, and `a³ ± b³`.
 - Beyond that, through the back end; the in-house one stops.
 
+How the in-house one works: a sum is multiplied out and its common factor taken out
+(as simplify does), then treated as a polynomial in one of its variables, or in a
+function of them (`sin² t − 1` is `(sin t − 1)(sin t + 1)`), trying those of highest
+degree first. The polynomial's coefficients must be numbers, or one monomial's powers
+(homogeneous: `x² − 5 x y + 6 y²`), and its rational roots are found from the divisors
+of its first and last coefficients (up to 10¹²), so `a² ± 2ab + b²` and `a³ ± b³` need
+no rules of their own. Each factor found is factored again (`x⁴ − y⁴` is
+`(x − y)(x + y)(x² + y²)`). A sum of degree two or more left unfactored gets the note
+"Couldn't factor this further", as `x² + 1` does.
+
 ### 9.4 `substitute, x ⩵ value` (repeatable: `substitute, x ⩵ 1, y ⩵ 2`)
 
-Replaces each named symbol, then simplifies. `value` is any expression.
+Replaces each named symbol, all at once (so `substitute, x ⩵ y, y ⩵ x` swaps them),
+then simplifies. `value` is any expression, read like the region's own (definitions
+substituted, units after a number).
 
 ### 9.5 `solve, x`
 
@@ -307,15 +374,43 @@ Replaces each named symbol, then simplifies. `value` is any expression.
 - `x` inside one invertible function or power: undoes it (`F ⩵ k d²` gives
   `d = √(F/k)` and `d = −√(F/k)`; `y ⩵ e^(k t)` gives `t = ln(y)/k`).
 - Several solutions are shown as a list, `σ = …, σ = …`, until matrices (#27) allow a
-  column; two that differ only in a radical's sign are shown as one, with `±` (5.3).
-- Beyond that, through the back end; the in-house one returns "Couldn't solve this
-  for x".
+  column; two that differ only in a radical's sign, or only in sign, are shown as one,
+  with `±` (5.3), over the root's denominator when the rest shares it:
+  `x = (−b ± √(b² − 4 a c))/(2 a)`.
+- Beyond that, through the back end; the in-house one leaves the input with the note
+  "Couldn't solve this for x".
+
+How the in-house one works: x in a denominator is multiplied through; a factor of a
+product is solved on its own (a denominator never is zero); a polynomial in x is
+factored, or solved by degree (linear, the quadratic formula); otherwise the one term
+with x in it is moved across and undone, a function or power at a time (an even power
+gives both roots, `|g| = v` gives `g = ±v`, `e^g = v` gives `g = ln v`, `sin g = v`
+the principal `g = asin v`).
+
+Each solution is put back: one that leaves a value that can't be zero (a nonzero
+number, something positive or negative, or a value with no variables away from zero)
+is dropped, as `√x = −3` gives no `x = 9`. A solution found by undoing a root or `|…|`
+may still hold only for some values of the other names (`√(x z) = (z − 3) y` needs
+`z ≥ 3`); it's kept, as Mathcad does, since those conditions aren't shown. With no
+solution left, or none at all, the note says so ("There's no real solution for x",
+"There's no solution for x", "Any x is a solution").
+
+The variable solved for, like those of `diff` and `integrate`, stays a name even when
+it's defined above: with `x := 5` above, `x² ⩵ 9 → solve, x` is `x = ±3`.
 
 ### 9.6 `diff, x` (and `diff, x, n`)
 
 Differentiates with respect to `x`, `n` times, with the sum, product, quotient, power
-and chain rules and the elementary functions' derivatives. In scope for everything the
-engine can represent.
+and chain rules and the elementary functions' derivatives, then simplifies. In scope
+for everything the engine can represent but a call to an undefined function of `x`,
+which leaves the input with the note "Couldn't differentiate f, a function with no
+definition". `x` is the result's main variable for display (section 11), so a
+polynomial in it is in descending powers when that leads with a plus: `2 a x + b`,
+but `2 L − x`.
+
+Keywords apply left to right, each to the result of the one before (`substitute,
+x == a + 1; expand`); `keep` and `real` apply to the whole region wherever they're
+written. With an equation, each operation applies to both sides.
 
 ### 9.7 `integrate, x` (and `integrate, x, a, b`)
 
@@ -327,7 +422,15 @@ engine can represent.
 - Definite: the indefinite integral, evaluated at the limits and simplified. Limits
   may be symbols or have units, and the result's dimension is the integrand's times
   `x`'s.
-- Beyond that, the integral is returned unevaluated with "Couldn't integrate this".
+- Beyond that, the input is returned with the note "Couldn't integrate this".
+- `ln` of a linear argument is `ln|a x + b|`, or `ln(a x + b)` when that's positive,
+  as it is with `a` and `b` positive (5.3).
+
+How the in-house one works: linearity; a power of x or of a linear argument; an
+exponential, `sin`, `cos`, `tan` or `ln` of one; by parts, repeatedly, for a
+polynomial times `sin`, `cos` or an exponential of a linear argument; a polynomial over
+a power of a linear factor, through `u = a x + b`; and failing those, the integrand
+multiplied out. Each antiderivative is simplified.
 
 ## 10. Evaluation and storage
 
@@ -335,12 +438,13 @@ engine can represent.
   other. It defines nothing, so it never changes numeric results.
 - **Results** go in `RegionResult` as a tree (alongside `value`, `number` and `unit`),
   are recomputed on every evaluation, and are never saved.
-- **Files.** `Symbolic` and `Equation` are new node kinds, so `.lemma` goes to version
-  5. The JSON form: `{"kind": "symbolic", "expr": …, "keyword": …}` (as a region's
-  root, or as a definition's `rhs`, 7.1) and
-  `{"kind": "equation", "lhs": …, "rhs": …}`. A keyword is a `call` node whose name is
-  the keyword (`solve`, args `[σ]`). Version 4 files are refused, as pre-release
-  policy says.
+- **Files.** `Symbolic`, `Keyword` and `Equation` are new node kinds, so `.lemma` goes
+  to version 5. The JSON forms: `{"kind": "symbolic", "expr": …, "keywords": […]}`
+  (as a region's root, or as a definition's `rhs`, 7.1), where each keyword slot is a
+  placeholder, an identifier, or `{"kind": "keyword", "name": …, "args": […]}`; and
+  `{"kind": "equation", "lhs": …, "rhs": …}`, only as a whole slot (the region, the
+  expression, or an argument). Version 4 files are refused, as pre-release policy
+  says.
 - **Cost.** Every recalculation reruns symbolic regions. Worksheet-size expressions are
   cheap, and expansion is capped (9.2), so a runaway region gives an error rather than
   a hang.
@@ -353,18 +457,23 @@ Raising an `Expr` to a tree chooses a readable form:
   `w L⁴/(8 E I)`. Numeric coefficients go in front, or into the fraction when they
   are its only numerator (`3/(2 x)`). Negative fractional exponents become radicals in
   the denominator.
+- **Main variable.** The keyword's `x`, or else the variable of highest degree, then
+  the most used, then the last to appear.
 - **Order of factors.** Numbers first, then constants (π), then variables in the
-  order they first appear in the region's expression, then units last and upright
-  (`10 kN·m`, `P L³/(3 E I)`).
-- **Order of terms.** For a polynomial in one main variable (the keyword's `x`, or
-  the variable of highest degree), descending powers: `x² − 5x + 6`. Otherwise, the
-  order of first appearance.
+  order they first appear in the region's expression, with the main variable last
+  among them (`a x²`, `k t`), then roots (`2 x √y`), functions, sums, and units last
+  and upright (`10 kN·m`, `P L³/(3 E I)`).
+- **Order of terms.** For a polynomial in a variable of degree above one, descending
+  powers: `x² − 5x + 6`. Otherwise, the order of first appearance, with the terms
+  that have the main variable after those that don't (`2 L − x`). A constant goes
+  last.
 - **Signs.** A negative term is written as a subtraction (`a − b`, not `a + (−1) b`);
   a sum whose terms are all negative is negated as a whole.
 - **Roots.** Exponent ½ is `√`; other fractional exponents stay as powers (`x^(2/3)`)
   until #30 gives n-th roots.
-- **Juxtaposition.** A coefficient times a symbol, and units after a number, are
-  juxtaposed (`3 x`, `10 kN`); other products use `·`, as typed regions do.
+- **Juxtaposition.** Factors are juxtaposed, as in a textbook (`3 x`, `w L⁴`,
+  `x sin(k x)`), except before a number, which would read as part of the one before
+  (`3·2^(1/3)`), and between units (`kN·m`).
 
 ## 12. Worked examples
 
@@ -384,8 +493,10 @@ Each assumes nothing is defined above unless shown.
 | `P := 4 kN`, `L := 2.5 m` above; `P L →` | `10 kN·m` | definitions substituted, units kept as typed |
 | same; `P L →` with `keep, P` | `2.5 P m` | units last (11) |
 | `2 m + 3 mm →` | `2.003 m` | 8 |
+| cantilever values above; `P L³/(3 E I) →` | `0.025 m` | units tidied in a product (8) |
+| `½ m v² →` | `m v²/2` | free names: `m` is a mass (8) |
 | `1 m + 1 kg →` | Units don't match: m and kg | an error, as numerically |
-| `e^(x²) →` with `integrate, x` | `∫ e^(x²) dx`, "Couldn't integrate this" | beyond the scope; not an error |
+| `e^(x²) →` with `integrate, x` | `e^(x²)`, "Couldn't integrate this" | beyond the scope; not an error |
 | `√(x²) →` | `x` | symbols are positive (5.3) |
 | `√(y²) →` with `real, y` | `\|y\|` | the opt-out (5.3) |
 | `θ(x) := y(x) →` with `diff, x`, with `y` as above | `P x (2 L − x)/(2 E I)`; `θ(L) =` then evaluates | symbolic definition (7.1) |
@@ -407,8 +518,9 @@ Each step lands with Catch2 tests; the editor and canvas steps also with GUI cas
 7. **Symbolic definitions** (7.1): `Symbolic` as a definition's right-hand side, its
    result defining the name, and plots of it.
 
-The worksheet demo (a beam derivation from load to deflection, then plotted) is
-possible after step 7.
+All seven steps are done. The worksheet demo, a cantilever's deflection from the beam
+tables with its slope, moment and tip deflection derived and plotted, is
+`examples/beam-derivation.lemma`.
 
 ## 14. Review
 

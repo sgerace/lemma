@@ -33,6 +33,12 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
   expressions such as `f, sin(x) / 2`). Tab steps through the x variable and the axis
   limits; empty y limits fit the data. Limits can carry units, e.g. `0 m` to `200 mm`.
   Drag the corner to resize.
+- **Symbolic math:** Ctrl+. evaluates symbolically (`→`), with keywords above the arrow:
+  `simplify`, `expand`, `factor`, `substitute`, `solve`, `diff` and `integrate`, plus
+  `keep` and `real`. Names defined above are replaced by their definitions, units
+  are kept and checked, and a definition like `θ(x) := y(x) → diff, x` defines a
+  derived formula to evaluate and plot. See `examples/beam-derivation.lemma` and
+  `docs/symbolic-spec.md`.
 - **Portable files:** `.lemma` files are versioned JSON, storing each expression as a
   tree, so they're human-readable and diff well in version control.
 - **PDF export** of the page layout, US Letter.
@@ -53,6 +59,9 @@ Type as you would write it on one line; the editor builds the 2D expression.
 | Tab | Go to the next placeholder ■ |
 | Backspace | After an operator you just typed, removes it: `a+` Backspace gives `a` |
 | Ctrl+C, Ctrl+V | Copy and paste as linear text, e.g. `w L^4/(8 E I)` |
+| Ctrl+. | Evaluate symbolically: `→`, with a keyword above it like `diff, x`; in a definition, its value |
+| Ctrl+= | An equation's bold equals sign, for `solve`: `M ⩵ σ I/c` |
+| Ctrl+Shift+C | Copy just the result |
 
 Letters in a row are one name (`LF`); multiply names with `*`. A name's part after `_`
 is shown as a subscript (`δ_allow`).

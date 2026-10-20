@@ -77,6 +77,25 @@ MathCaret rightEdge(const MathNode& n)
 // ---------------------------------------------------------------------------
 // Characters
 
+// Child `index` of `p` is a name: a function's or a keyword's (see isNameSlot).
+bool nameSlot(const MathNode* p, int index)
+{
+    return p && (((p->kind == Kind::Call || p->kind == Kind::Keyword) && index == 0)
+                 || (p->kind == Kind::Symbolic && index >= 1));
+}
+
+// Node `id` is a whole slot that can hold an equation: the region (when it isn't a
+// statement), a symbolic evaluation's expression, or a keyword's argument.
+bool equationSlot(const MathNode& root, int id)
+{
+    int index = 0;
+    const MathNode* p = parentOf(root, id, &index);
+    if (!p) {
+        return !root.isStatement();
+    }
+    return (p->kind == Kind::Symbolic && index == 0) || (p->kind == Kind::Keyword && index >= 1);
+}
+
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 bool isIdentStart(unsigned char c) { return std::isalpha(c) || c == '_' || c >= 0x80; }
 bool isIdentChar(unsigned char c) { return std::isalnum(c) || c == '_' || c >= 0x80; }
@@ -238,6 +257,12 @@ MathEditor::Change MathEditor::type(std::string_view ch)
     if (ch == "÷") ch = "/";
     if (ch == "−") ch = "-";
     if (ch == "≔") ch = ":";
+    if (ch == "→") {
+        return typeSymbolic();
+    }
+    if (ch == "⩵") {
+        return typeEquation();
+    }
 
     if (ch.size() == 1) {
         switch (ch[0]) {
@@ -253,6 +278,8 @@ MathEditor::Change MathEditor::type(std::string_view ch)
             return typeCloseParen();
         case ',':
             return typeComma();
+        case ';':
+            return typeSemicolon();
         case '\\':
             return typeRadical();
         case ':':
@@ -332,6 +359,9 @@ MathEditor::Change MathEditor::typeOperator(char op)
         MathNode* n = findMathNode(root_, caret_.node);
         int nameIndex = 0;
         const MathNode* owner = parentOf(root_, n->id, &nameIndex);
+        if (nameSlot(owner, nameIndex) && owner->kind != Kind::Call) {
+            return Change::None; // a keyword is only a name
+        }
         if (owner && owner->kind == Kind::Call && nameIndex == 0 && (n->kind == Kind::Placeholder || caret_.offset > 0)) {
             return Change::None; // a function's name can't take an operator, except before it
         }
@@ -369,7 +399,7 @@ MathEditor::Change MathEditor::typeOperator(char op)
             // At the start of an operand, "-" negates it (section 5.2).
             int index = 0;
             const MathNode* p = parentOf(root_, n->id, &index);
-            if (p && p->kind == Kind::Call && index == 0) {
+            if (nameSlot(p, index)) {
                 return Change::None;
             }
             MathNode operand = std::move(*n);
@@ -404,7 +434,7 @@ MathEditor::Change MathEditor::typeOperator(char op)
     MathNode* s = findMathNode(root_, target);
     int index = 0;
     const MathNode* p = parentOf(root_, target, &index);
-    if (s->isStatement() || (p && p->kind == Kind::Call && index == 0)) {
+    if (s->isStatement() || (nameSlot(p, index))) {
         return Change::None; // a statement can't be an operand, nor can a function's name
     }
     MathNode hole;
@@ -425,7 +455,7 @@ MathEditor::Change MathEditor::multiplyBeside(MathNode tree, int caretNode)
     MathNode* n = findMathNode(root_, caretNode);
     int index = 0;
     const MathNode* p = parentOf(root_, caretNode, &index);
-    if (n->isStatement() || (p && p->kind == Kind::Call && index == 0)) {
+    if (n->isStatement() || (nameSlot(p, index))) {
         return Change::None;
     }
     bool right = caret_.side == Side::Right;
@@ -452,7 +482,7 @@ MathEditor::Change MathEditor::typeLeafCharacter(std::string_view ch)
     MathNode* n = findMathNode(root_, caret_.node);
     int index = 0;
     const MathNode* p = parentOf(root_, caret_.node, &index);
-    const bool isName = p && p->kind == Kind::Call && index == 0;
+    const bool isName = nameSlot(p, index);
 
     if (caret_.selected) {
         if (isName && fresh[0].kind != Kind::Identifier) {
@@ -515,7 +545,7 @@ MathEditor::Change MathEditor::typeOpenParen()
     MathNode* n = findMathNode(root_, caret_.node);
     int index = 0;
     const MathNode* p = parentOf(root_, caret_.node, &index);
-    const bool isName = p && p->kind == Kind::Call && index == 0;
+    const bool isName = nameSlot(p, index);
     if (caret_.selected) {
         if (n->isStatement() || isName) {
             return Change::None;
@@ -588,7 +618,7 @@ MathEditor::Change MathEditor::typeCloseParen()
     MathNode* s = findMathNode(root_, target);
     int index = 0;
     const MathNode* p = parentOf(root_, target, &index);
-    if (s->isStatement() || (p && p->kind == Kind::Call && index == 0)) {
+    if (s->isStatement() || (nameSlot(p, index))) {
         return Change::None;
     }
     MathNode contents = std::move(*s);
@@ -606,10 +636,43 @@ MathEditor::Change MathEditor::typeComma()
         if (!p) {
             return Change::None;
         }
-        if (p->kind == Kind::Call && index >= 1) {
+        if ((p->kind == Kind::Call && index >= 1) || p->kind == Kind::Keyword) {
             MathNode argument;
             const MathCaret next = leftEdge(argument);
             p->children.insert(p->children.begin() + index + 1, std::move(argument));
+            caret_ = next;
+            return Change::Edited;
+        }
+        if (p->kind == Kind::Symbolic && index >= 1) {
+            // After a keyword's name, "," starts its arguments: solve, ■ (symbolic spec, 6.2).
+            MathNode* k = &p->children[static_cast<std::size_t>(index)];
+            if (k->kind != Kind::Identifier) {
+                return Change::None;
+            }
+            MathNode argument;
+            const MathCaret next = leftEdge(argument);
+            MathNode name = std::move(*k);
+            *k = MathNode(Kind::Keyword, {std::move(name), std::move(argument)});
+            caret_ = next;
+            return Change::Edited;
+        }
+        id = p->id;
+    }
+}
+
+MathEditor::Change MathEditor::typeSemicolon()
+{
+    // In a keyword, ";" starts another one after it: keep, P; ■.
+    for (int id = caret_.node;;) {
+        int index = 0;
+        MathNode* p = parentOf(root_, id, &index);
+        if (!p) {
+            return Change::None;
+        }
+        if (p->kind == Kind::Symbolic && index >= 1) {
+            MathNode keyword;
+            const MathCaret next = leftEdge(keyword);
+            p->children.insert(p->children.begin() + index + 1, std::move(keyword));
             caret_ = next;
             return Change::Edited;
         }
@@ -622,7 +685,7 @@ MathEditor::Change MathEditor::typeRadical()
     MathNode* n = findMathNode(root_, caret_.node);
     int index = 0;
     const MathNode* p = parentOf(root_, caret_.node, &index);
-    const bool isName = p && p->kind == Kind::Call && index == 0;
+    const bool isName = nameSlot(p, index);
     if (caret_.selected) {
         if (n->isStatement() || isName) {
             return Change::None;
@@ -651,8 +714,9 @@ MathEditor::Change MathEditor::typeRadical()
 
 MathEditor::Change MathEditor::typeStatement(char op)
 {
-    // ":" and "=" act on the whole region, wherever the caret is (section 8.4).
-    if (root_.isStatement()) {
+    // ":" and "=" act on the whole region, wherever the caret is (section 8.4). An
+    // equation can't be defined or evaluated, only solved or simplified.
+    if (root_.isStatement() || root_.kind == Kind::Equation) {
         return Change::None;
     }
     MathNode hole;
@@ -661,6 +725,61 @@ MathEditor::Change MathEditor::typeStatement(char op)
     root_ = MathNode(op == ':' ? Kind::Definition : Kind::Evaluation, {std::move(expression), std::move(hole)});
     caret_ = next;
     afterColon_ = op == ':';
+    return Change::Edited;
+}
+
+MathEditor::Change MathEditor::typeSymbolic()
+{
+    // Ctrl+. acts on the whole region, like ":" and "=", or on a definition's value
+    // (symbolic spec, sections 6.2 and 7.1), and leaves the caret on the keyword.
+    MathNode* target = &root_;
+    if (root_.kind == Kind::Definition) {
+        target = &root_.children[1];
+    } else if (root_.isStatement()) {
+        return Change::None;
+    }
+    if (target->kind == Kind::Placeholder || target->kind == Kind::Symbolic) {
+        return Change::None;
+    }
+    MathNode keyword;
+    const MathCaret next = leftEdge(keyword);
+    MathNode expression = std::move(*target);
+    *target = MathNode(Kind::Symbolic, {std::move(expression), std::move(keyword)});
+    caret_ = next;
+    return Change::Edited;
+}
+
+MathEditor::Change MathEditor::typeEquation()
+{
+    // Ctrl+= makes the whole slot the caret is in the left side of an equation: the
+    // region, a symbolic evaluation's expression, or a keyword's argument (section 6.3).
+    int id = caret_.node;
+    for (;;) {
+        int index = 0;
+        const MathNode* p = parentOf(root_, id, &index);
+        if (!p) {
+            if (root_.isStatement()) {
+                return Change::None;
+            }
+            break;
+        }
+        if ((p->kind == Kind::Symbolic && index == 0) || (p->kind == Kind::Keyword && index >= 1)) {
+            break;
+        }
+        if (p->kind == Kind::Definition || p->kind == Kind::Evaluation || nameSlot(p, index)) {
+            return Change::None;
+        }
+        id = p->id;
+    }
+    MathNode* slot = findMathNode(root_, id);
+    if (slot->kind == Kind::Equation || slot->kind == Kind::Placeholder) {
+        return Change::None;
+    }
+    MathNode rhs;
+    const MathCaret next = leftEdge(rhs);
+    MathNode lhs = std::move(*slot);
+    *slot = MathNode(Kind::Equation, {std::move(lhs), std::move(rhs)});
+    caret_ = next;
     return Change::Edited;
 }
 
@@ -690,22 +809,35 @@ bool MathEditor::removePlaceholder(int id, bool before)
         case Kind::Power:
         case Kind::Definition:
         case Kind::Evaluation:
+        case Kind::Equation:
             if (index == 1) {
                 collapse(0, true);
                 return true;
             }
             return false;
+        case Kind::Symbolic:
+            if (index == 0) {
+                return false;
+            }
+            if (last == 1) {
+                collapse(0, true); // with no keyword, Backspace after → takes the arrow away
+            } else {
+                p->children.erase(p->children.begin() + index);
+                caret_ = rightEdge(p->children[static_cast<std::size_t>(index - 1)]);
+            }
+            return true;
         case Kind::Negate:
         case Kind::Radical:
         case Kind::Group:
             collapse(0, false);
             return true;
         case Kind::Call:
+        case Kind::Keyword:
             if (index == 0) {
                 return false;
             }
             if (last == 1) {
-                collapse(0, true); // f(■) goes back to f
+                collapse(0, true); // f(■) goes back to f, and solve, ■ to solve
             } else {
                 p->children.erase(p->children.begin() + index);
                 caret_ = index > 1 ? rightEdge(p->children[index - 1]) : leftEdge(p->children[index]);
@@ -721,8 +853,20 @@ bool MathEditor::removePlaceholder(int id, bool before)
     case Kind::Fraction:
     case Kind::Power:
     case Kind::Definition:
+    case Kind::Equation:
         if (index == 0) {
             collapse(1, false);
+            return true;
+        }
+        return false;
+    case Kind::Symbolic:
+        if (index == 0 && last == 1 && p->children[1].kind == Kind::Placeholder) {
+            collapse(1, false);
+            return true;
+        }
+        if (index >= 1 && index < last) {
+            p->children.erase(p->children.begin() + index);
+            caret_ = leftEdge(p->children[static_cast<std::size_t>(index)]);
             return true;
         }
         return false;
@@ -733,6 +877,7 @@ bool MathEditor::removePlaceholder(int id, bool before)
         }
         return false;
     case Kind::Call:
+    case Kind::Keyword:
         if (index >= 1 && index < last) {
             p->children.erase(p->children.begin() + index);
             caret_ = leftEdge(p->children[index]);
@@ -786,6 +931,7 @@ MathEditor::Change MathEditor::eraseAtLeftEdge(int id)
         }
         case Kind::Power:
         case Kind::Call:
+        case Kind::Keyword:
             if (index == 0) {
                 id = p->id; // the base and the name start where the box does
                 continue;
@@ -795,12 +941,21 @@ MathEditor::Change MathEditor::eraseAtLeftEdge(int id)
         case Kind::Fraction:
             select(p->id, Side::Right);
             return Change::Moved;
+        case Kind::Equation:
+            if (index == 0) {
+                id = p->id;
+                continue;
+            }
+            select(p->children[1].id, Side::Right);
+            return Change::Moved;
         case Kind::Definition:
         case Kind::Evaluation:
+        case Kind::Symbolic:
             if (index == 0) {
                 return Change::None;
             }
-            select(p->children[1].id, Side::Right); // rule 6; a placeholder was handled already
+            // rule 6; a placeholder was handled already
+            select(p->children[static_cast<std::size_t>(index)].id, Side::Right);
             return Change::Moved;
         default:
             return Change::None;
@@ -852,8 +1007,41 @@ MathEditor::Change MathEditor::eraseAtRightEdge(int id)
         case Kind::Fraction:
         case Kind::Power:
         case Kind::Call:
+        case Kind::Keyword:
             select(p->id, Side::Left);
             return Change::Moved;
+        case Kind::Equation:
+            if (index == 1) {
+                id = p->id;
+                continue;
+            }
+            if (p->children[1].kind == Kind::Placeholder) {
+                MathNode kept = std::move(p->children[0]);
+                const MathCaret next = rightEdge(kept);
+                *p = std::move(kept);
+                caret_ = next;
+                return Change::Edited;
+            }
+            select(p->children[1].id, Side::Left);
+            return Change::Moved;
+        case Kind::Symbolic: {
+            const std::size_t after = static_cast<std::size_t>(index) + 1;
+            if (after == p->children.size()) {
+                return Change::None;
+            }
+            if (p->children[after].kind == Kind::Placeholder) {
+                if (p->children.size() == 2) {
+                    MathNode kept = std::move(p->children[0]); // Delete before an empty keyword: no more →
+                    *p = std::move(kept);
+                    caret_ = rightEdge(*p);
+                } else {
+                    p->children.erase(p->children.begin() + static_cast<std::ptrdiff_t>(after));
+                }
+                return Change::Edited;
+            }
+            select(p->children[after].id, Side::Left);
+            return Change::Moved;
+        }
         case Kind::Definition:
         case Kind::Evaluation: {
             if (index == 1) {
@@ -922,7 +1110,7 @@ MathEditor::Change MathEditor::erase(bool before)
             *n = std::move(hole);
             return Change::Erased;
         }
-        const bool isName = p && p->kind == Kind::Call && index == 0;
+        const bool isName = nameSlot(p, index);
         std::vector<MathNode> tokens = lexLeaf(text);
         // Only erase what leaves a valid leaf: "2e-3" can't lose its e, nor a name its letters
         // before its digits.
@@ -1114,12 +1302,9 @@ MathEditor::Change MathEditor::flip()
 std::optional<std::string> MathEditor::copy() const
 {
     const MathNode& n = caret_.selected ? *findMathNode(root_, caret_.node) : root_;
-    // An evaluation's unit may be left empty; any other placeholder can't be written.
-    const MathNode* hole = firstPlaceholder(n);
-    if (n.kind == Kind::Evaluation && n.children[1].kind == Kind::Placeholder) {
-        hole = firstPlaceholder(n.children[0]);
-    }
-    if (hole) {
+    // An evaluation's unit and a keyword may be left empty; any other placeholder can't
+    // be written.
+    if (firstRequiredPlaceholder(n)) {
         return std::nullopt;
     }
     // Nor can anything else unfinished, like the number "2e-": what's copied must paste.
@@ -1139,13 +1324,16 @@ MathEditor::Change MathEditor::paste(MathNode tree)
     MathNode* n = findMathNode(root_, caret_.node);
     int index = 0;
     const MathNode* p = parentOf(root_, caret_.node, &index);
-    const bool isName = p && p->kind == Kind::Call && index == 0;
+    const bool isName = nameSlot(p, index);
     const bool replaces = caret_.selected || n->kind == Kind::Placeholder;
     if (tree.isStatement() && !(replaces && n->id == root_.id)) {
         return Change::None; // a definition or evaluation can only be a whole region
     }
     if (isName && (!replaces || tree.kind != Kind::Identifier)) {
         return Change::None;
+    }
+    if (tree.kind == Kind::Equation && !(replaces && equationSlot(root_, n->id))) {
+        return Change::None; // an equation is only ever a whole slot
     }
     if (replaces) {
         const MathCaret next = rightEdge(tree);

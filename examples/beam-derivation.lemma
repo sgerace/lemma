@@ -1,0 +1,627 @@
+{
+    "format": "lemma-worksheet",
+    "regions": [
+        {
+            "text": "Cantilever with a point load at its tip: deflection from the beam tables, then slope, moment and the tip deflection derived from it, and plotted.",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 72
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "P"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "4"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "kN"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 144
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "L"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "2.5"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "m"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
+            "type": "math",
+            "x": 240,
+            "y": 144
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "E"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "200"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "GPa"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
+            "type": "math",
+            "x": 408,
+            "y": 144
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "b"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "50"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "mm"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 192
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "h"
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "number",
+                        "text": "100"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "mm"
+                    },
+                    "style": "juxtaposed"
+                }
+            },
+            "type": "math",
+            "x": 240,
+            "y": 192
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "I"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "number",
+                        "text": "12"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "identifier",
+                            "text": "b"
+                        },
+                        "rhs": {
+                            "base": {
+                                "kind": "identifier",
+                                "text": "h"
+                            },
+                            "exp": {
+                                "kind": "number",
+                                "text": "3"
+                            },
+                            "kind": "power"
+                        },
+                        "style": "dot"
+                    }
+                }
+            },
+            "type": "math",
+            "x": 408,
+            "y": 192
+        },
+        {
+            "text": "Deflection a distance x from the support:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 264
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "y"
+                    }
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "6"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "E"
+                            },
+                            "style": "dot"
+                        },
+                        "rhs": {
+                            "kind": "identifier",
+                            "text": "I"
+                        },
+                        "style": "dot"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "identifier",
+                                "text": "P"
+                            },
+                            "rhs": {
+                                "base": {
+                                    "kind": "identifier",
+                                    "text": "x"
+                                },
+                                "exp": {
+                                    "kind": "number",
+                                    "text": "2"
+                                },
+                                "kind": "power"
+                            },
+                            "style": "dot"
+                        },
+                        "rhs": {
+                            "kind": "subtract",
+                            "lhs": {
+                                "kind": "multiply",
+                                "lhs": {
+                                    "kind": "number",
+                                    "text": "3"
+                                },
+                                "rhs": {
+                                    "kind": "identifier",
+                                    "text": "L"
+                                },
+                                "style": "dot"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "x"
+                            }
+                        },
+                        "style": "dot"
+                    }
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 312
+        },
+        {
+            "text": "Slope and bending moment, derived (keep leaves the names in the formula):",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 384
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "θ"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "x"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "x"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "diff"
+                            }
+                        },
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "P"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "L"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "E"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "I"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "keep"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 432
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "M"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "identifier",
+                                "text": "E"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "I"
+                            },
+                            "style": "dot"
+                        },
+                        "rhs": {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "x"
+                                }
+                            ],
+                            "kind": "call",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "θ"
+                            }
+                        },
+                        "style": "dot"
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "x"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "diff"
+                            }
+                        },
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "P"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "L"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "keep"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 504
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "δ_tip"
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "L"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "P"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "L"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "E"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "I"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "keep"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 72,
+            "y": 576
+        },
+        {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "δ_tip"
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "mm"
+                }
+            },
+            "type": "math",
+            "x": 456,
+            "y": 576
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "θ"
+                    }
+                },
+                "keywords": [
+                    {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "x"
+                            },
+                            {
+                                "kind": "number",
+                                "text": "0"
+                            },
+                            {
+                                "kind": "identifier",
+                                "text": "L"
+                            }
+                        ],
+                        "kind": "keyword",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "integrate"
+                        }
+                    },
+                    {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "P"
+                            },
+                            {
+                                "kind": "identifier",
+                                "text": "L"
+                            },
+                            {
+                                "kind": "identifier",
+                                "text": "E"
+                            },
+                            {
+                                "kind": "identifier",
+                                "text": "I"
+                            }
+                        ],
+                        "kind": "keyword",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "keep"
+                        }
+                    }
+                ],
+                "kind": "symbolic"
+            },
+            "type": "math",
+            "x": 72,
+            "y": 648
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "0"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "m"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "M"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "identifier",
+                        "text": "kN"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "m"
+                    },
+                    "style": "dot"
+                }
+            },
+            "type": "math",
+            "x": 456,
+            "y": 648
+        },
+        {
+            "height": 240,
+            "traces": "y(x)/mm",
+            "type": "plot",
+            "width": 480,
+            "x": 96,
+            "xMax": "L",
+            "xMin": "0 m",
+            "xVariable": "x",
+            "y": 720,
+            "yMax": "",
+            "yMin": ""
+        }
+    ],
+    "version": 5
+}

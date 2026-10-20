@@ -109,7 +109,9 @@ struct MathLayoutOptions {
     // doesn't give one.
     std::string resultNumber;
     const MathNode* resultUnit = nullptr;
-    // While editing, an empty unit slot is shown as a placeholder.
+    // A symbolic evaluation's result, shown after "→".
+    const MathNode* resultTree = nullptr;
+    // While editing, an empty unit or keyword slot is shown as a placeholder.
     bool showEmptyUnit = false;
     // Identifiers that meant units; they are upright, and other names italic.
     std::vector<int> upright;
