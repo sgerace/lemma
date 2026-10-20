@@ -2,6 +2,7 @@
 
 #include "lemma/error.h"
 #include "lemma/evaluator.h"
+#include "lemma/symbolic_ops.h"
 #include "lemma/units.h"
 
 #include <algorithm>
@@ -957,6 +958,93 @@ private:
 MathNode mathFromExpr(const Expr& e, const ExprDisplayOptions& options)
 {
     return Raiser(e, options).result(e);
+}
+
+namespace {
+
+// True if e has a root in it, as √(b² − 4 a c) or √2 does.
+bool hasRoot(const Expr& e)
+{
+    if (e.kind() != Expr::Kind::Product) {
+        return false;
+    }
+    return std::any_of(e.factors().begin(), e.factors().end(), [](const ExprFactor& f) {
+        return f.exponent.isNumber() && !f.exponent.number().isInteger();
+    });
+}
+
+// What e is over: its coefficient's denominator and its factors with negative exponents.
+Expr denominatorOf(const Expr& e)
+{
+    if (e.kind() != Expr::Kind::Product && !e.isNumber()) {
+        return Expr(1);
+    }
+    const Number& c = e.isNumber() ? e.number() : e.coefficient();
+    std::vector<Expr> parts{Expr(c.isExact() && !c.decimal() ? c.exact().den() : 1)};
+    if (e.kind() == Expr::Kind::Product) {
+        for (const ExprFactor& f : e.factors()) {
+            if (f.exponent.isNumber() && f.exponent.number().isNegative()) {
+                parts.push_back(Expr::pow(f.base, -f.exponent));
+            }
+        }
+    }
+    return Expr::product(parts);
+}
+
+} // namespace
+
+MathNode mathFromSolutions(const std::string& x, const std::vector<Expr>& solutions, const ExprDisplayOptions& options)
+{
+    ExprDisplayOptions display = options;
+    display.main = x;
+    const auto shown = [&](const Expr& e) { return Raiser(e, display).result(e); };
+    const auto equation = [&](MathNode value) {
+        return MathNode(MathNode::Kind::Equation, {MathNode::identifier(x), std::move(value)});
+    };
+
+    std::vector<MathNode> items;
+    std::vector<bool> used(solutions.size(), false);
+    for (std::size_t i = 0; i < solutions.size(); ++i) {
+        if (used[i]) {
+            continue;
+        }
+        used[i] = true;
+        std::optional<MathNode> paired;
+        for (std::size_t j = i + 1; j < solutions.size() && !paired; ++j) {
+            if (used[j]) {
+                continue;
+            }
+            // s = a ± b, for a b with a root in it.
+            const Expr a = simplify((solutions[i] + solutions[j]) / Expr(2));
+            Expr b = simplify((solutions[i] - solutions[j]) / Expr(2));
+            if (!hasRoot(b) && !(a == Expr(0))) {
+                continue;
+            }
+            if (b.coefficient().isNegative()) {
+                b = -b;
+            }
+            used[j] = true;
+            const Expr d = denominatorOf(b);
+            const Expr top = simplify(a * d);
+            if (a == Expr(0)) {
+                MathNode plusMinus(MathNode::Kind::Negate, {shown(b)});
+                plusMinus.op = '~';
+                paired = std::move(plusMinus);
+            } else if (!(d == Expr(1)) && denominatorOf(top) == Expr(1)) {
+                // Over the root's denominator: (−b ± √D)/(2 a).
+                MathNode both = MathNode::binary('~', shown(top), shown(simplify(b * d)));
+                paired = MathNode(MathNode::Kind::Fraction, {std::move(both), shown(d)});
+            } else {
+                paired = MathNode::binary('~', shown(a), shown(b));
+            }
+        }
+        items.push_back(equation(paired ? std::move(*paired) : shown(solutions[i])));
+    }
+    MathNode list = std::move(items.front());
+    for (std::size_t i = 1; i < items.size(); ++i) {
+        list = MathNode::binary(',', std::move(list), std::move(items[i]));
+    }
+    return list;
 }
 
 } // namespace lemma

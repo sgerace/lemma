@@ -53,4 +53,9 @@ struct ExprDisplayOptions {
 // w L⁴/(8 E I), not (1/8)·w·L⁴·E⁻¹·I⁻¹.
 MathNode mathFromExpr(const Expr& e, const ExprDisplayOptions& options = {});
 
+// solve's solutions for x, as a list: x = …, x = … (section 9.5). Two that differ only
+// in a root's sign are shown as one, with ±: x = (−b ± √(b² − 4 a c))/(2 a).
+MathNode mathFromSolutions(const std::string& x, const std::vector<Expr>& solutions,
+                           const ExprDisplayOptions& options = {});
+
 } // namespace lemma

@@ -118,11 +118,14 @@ bool contains(const MathNode& ancestor, int id)
 bool needsParentheses(const MathNode& parent, int index)
 {
     const MathNode& child = parent.children[static_cast<std::size_t>(index)];
-    const bool sum = child.kind == MathNode::Kind::Binary && (child.op == '+' || child.op == '-');
+    const bool sum = child.kind == MathNode::Kind::Binary && (child.op == '+' || child.op == '-' || child.op == '~');
+    if (parent.kind == MathNode::Kind::Binary && parent.op == ',') {
+        return false; // a list's items
+    }
     const bool product = child.kind == MathNode::Kind::Binary && !sum;
     switch (parent.kind) {
     case MathNode::Kind::Binary:
-        if (parent.op == '+' || parent.op == '-') {
+        if (parent.op == '+' || parent.op == '-' || parent.op == '~') {
             return index == 1 && sum;
         }
         return sum || (index == 1 && (product || child.kind == MathNode::Kind::Negate));
@@ -289,7 +292,7 @@ int precedence(const MathNode& n)
     case MathNode::Kind::Equation:
         return 0;
     case MathNode::Kind::Binary:
-        return n.op == '+' || n.op == '-' ? 1 : 2;
+        return n.op == ',' ? 0 : n.op == '+' || n.op == '-' || n.op == '~' ? 1 : 2;
     case MathNode::Kind::Fraction:
         return 2;
     case MathNode::Kind::Negate:
@@ -347,6 +350,8 @@ std::string linear(const MathNode& n)
         const std::string rhs = wrapped(c[1], rhsParens);
         switch (n.op) {
         case '+': return lhs + " + " + rhs;
+        case '~': return lhs + " ± " + rhs;
+        case ',': return linear(c[0]) + ", " + linear(c[1]);
         case '-': return lhs + " - " + rhs;
         case '*':
             // A name right before "(" would be read as a call, so only a number or ")" may.
@@ -359,7 +364,7 @@ std::string linear(const MathNode& n)
         }
     }
     case MathNode::Kind::Negate:
-        return "-" + wrapped(c[0], precedence(c[0]) < 3);
+        return (n.op == '~' ? "±" : "-") + wrapped(c[0], precedence(c[0]) < 3);
     case MathNode::Kind::Fraction:
         return wrapped(c[0], precedence(c[0]) < 2) + "/" + wrapped(c[1], precedence(c[1]) <= 2);
     case MathNode::Kind::Power:

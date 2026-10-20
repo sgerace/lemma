@@ -20,8 +20,9 @@ struct MathNode {
         Number,      // text, as typed: "9.81", "1e-3"
         Identifier,  // text: "L", "x1", "kN"
         Placeholder, // an empty slot
-        Binary,      // children: lhs, rhs; op: '+', '-', '*', or 0 for an operator placeholder
-        Negate,      // children: operand
+        Binary,      // children: lhs, rhs; op: '+', '-', '*', or 0 for an operator placeholder; in
+                     // results only, '~' for ± and ',' for a list of solutions
+        Negate,      // children: operand; op '~' (in results only) for ±
         Fraction,    // children: numerator, denominator
         Power,       // children: base, exponent
         Radical,     // children: radicand

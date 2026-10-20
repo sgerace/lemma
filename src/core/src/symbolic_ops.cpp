@@ -107,7 +107,9 @@ std::size_t exprSize(const Expr& e)
     case Expr::Kind::Product: {
         std::size_t n = e.coefficient().isOne() || e.coefficient() == Number(-1) ? 0 : 1;
         for (const ExprFactor& f : e.factors()) {
-            n += exprSize(f.base) + (f.exponent == Expr(1) ? 0 : exprSize(f.exponent));
+            // A sum as a factor costs its parentheses too.
+            n += exprSize(f.base) + (f.exponent == Expr(1) ? 0 : exprSize(f.exponent))
+                 + (f.base.kind() == Expr::Kind::Sum ? 1 : 0);
         }
         return n;
     }
@@ -157,6 +159,10 @@ std::pair<Expr, Expr> splitCommonFactor(const Expr& sum)
         std::vector<ExprFactor> kept;
         for (const ExprFactor& c : common) {
             const auto match = std::find_if(here.begin(), here.end(), [&](const ExprFactor& f) { return f.base == c.base; });
+            if (match != here.end() && !c.exponent.isNumber() && c.exponent == match->exponent) {
+                kept.push_back(c); // the same power, like eˣ in x² eˣ − 2 x eˣ
+                continue;
+            }
             if (match == here.end() || !c.exponent.isNumber() || !match->exponent.isNumber()
                 || !c.exponent.number().isExact() || !match->exponent.number().isExact()) {
                 continue;

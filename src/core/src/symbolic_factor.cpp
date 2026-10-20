@@ -3,6 +3,8 @@
 
 #include "lemma/symbolic_ops.h"
 
+#include "symbolic_internal.h"
+
 #include "lemma/error.h"
 
 #include <algorithm>
@@ -101,8 +103,9 @@ std::vector<Expr> generators(const Expr& sum)
     return out;
 }
 
-// The sum as a polynomial in v: its coefficients, lowest degree first, free of v.
-std::optional<std::vector<Expr>> coefficientsIn(const Expr& sum, const Expr& v)
+} // namespace
+
+std::optional<std::vector<Expr>> detail::coefficientsIn(const Expr& sum, const Expr& v)
 {
     std::vector<Expr> coefficients;
     for (const Expr& term : termsOf(sum)) {
@@ -127,6 +130,10 @@ std::optional<std::vector<Expr>> coefficientsIn(const Expr& sum, const Expr& v)
     }
     return coefficients;
 }
+
+namespace {
+
+using detail::coefficientsIn;
 
 std::vector<std::int64_t> divisors(std::int64_t n)
 {
@@ -341,33 +348,24 @@ bool isHigherDegree(const Expr& sum)
     return false;
 }
 
-class InHouseBackend : public SymbolicBackend {
-public:
-    std::optional<Expr> factor(const Expr& e) const override
-    {
-        switch (e.kind()) {
-        case Expr::Kind::Sum:
-            return factorSum(e);
-        case Expr::Kind::Product: {
-            std::vector<Expr> parts{Expr(e.coefficient())};
-            for (const ExprFactor& f : e.factors()) {
-                const Expr base = f.base.kind() == Expr::Kind::Sum ? factorSum(f.base) : f.base;
-                parts.push_back(Expr::pow(base, f.exponent));
-            }
-            return Expr::product(parts);
-        }
-        default:
-            return e;
-        }
-    }
-};
-
 } // namespace
 
-const SymbolicBackend& inHouseBackend()
+std::optional<Expr> detail::factorInHouse(const Expr& e)
 {
-    static const InHouseBackend backend;
-    return backend;
+    switch (e.kind()) {
+    case Expr::Kind::Sum:
+        return factorSum(e);
+    case Expr::Kind::Product: {
+        std::vector<Expr> parts{Expr(e.coefficient())};
+        for (const ExprFactor& f : e.factors()) {
+            const Expr base = f.base.kind() == Expr::Kind::Sum ? factorSum(f.base) : f.base;
+            parts.push_back(Expr::pow(base, f.exponent));
+        }
+        return Expr::product(parts);
+    }
+    default:
+        return e;
+    }
 }
 
 Expr factor(const Expr& e)

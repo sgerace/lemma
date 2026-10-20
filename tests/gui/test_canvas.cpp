@@ -1133,6 +1133,9 @@ private slots:
         click({480, 912});
         keys("M{equation}s*I/c{symbolic}");
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        click({480, 984});
+        keys("k*t^2{right}+u*t+v{symbolic}solve,t");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         shiftClick(regionPoint(sheet().regions()[1], 1)); // selection shows on screen, not in the PDF
 
         QVERIFY(canvas_->grab().save(dir + "/canvas.png"));

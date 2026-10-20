@@ -372,3 +372,82 @@ TEST_CASE("Expansions and derivatives have the right values")
     }
     CHECK(checked > 500);
 }
+
+// integrate and solve, checked numerically: an antiderivative's slope is the integrand,
+// and every solution makes its equation hold.
+TEST_CASE("Antiderivatives and solutions check out numerically")
+{
+    RandomExpressions random;
+    int integrated = 0;
+    int solved = 0;
+    for (int run = 0; run < 3000; ++run) {
+        const std::string source = random.generate(3);
+        INFO(source);
+        const MathNode tree = mathFromLinear(source);
+        Expr e;
+        try {
+            e = exprFromMath(tree);
+        } catch (const Error&) {
+            continue; // no value anywhere, like 1/(z − z)
+        }
+        const double x = random.value();
+        const auto at = [&](double v) {
+            Environment env;
+            env.define("x", Quantity::scalar(v));
+            env.define("y", Quantity::scalar(1.7));
+            env.define("z", Quantity::scalar(1.3));
+            return env;
+        };
+
+        try {
+            const Expr antiderivative = integrate(e, "x");
+            const double h = 1e-5;
+            const double f = evaluate(*lowerExpression(tree), at(x)).value;
+            const double slope = (valueOf(antiderivative, tree, at(x + h)) - valueOf(antiderivative, tree, at(x - h))) / (2 * h);
+            if (std::isfinite(f) && std::abs(f) < 1e4) {
+                INFO("∫ -> " << antiderivative.debugString());
+                CHECK(std::abs(slope - f) <= 1e-4 * std::max(1.0, std::abs(f)));
+                ++integrated;
+            }
+        } catch (const BeyondScope&) {
+        } catch (const Error&) {
+            // no value at this x
+        }
+
+        try {
+            for (const Expr& s : solve(e, Expr(0), "x")) {
+                // Where a solution is real, the expression is zero there.
+                double value = 0.0;
+                try {
+                    value = valueOf(s, tree, at(0));
+                } catch (const Error&) {
+                    continue;
+                }
+                double residual = 0.0;
+                try {
+                    residual = evaluate(*lowerExpression(tree), at(value)).value;
+                } catch (const Error&) {
+                    continue;
+                }
+                if (value <= 0) {
+                    continue; // symbols are positive (5.3): |x| was simplified as x
+                }
+                // Undoing a root or |…| gives a solution that may hold only for some
+                // values of the other names, like √(x z) = (z − 3) y for z ≥ 3.
+                const bool rooted = source.find("abs") != std::string::npos || source.find("sqrt") != std::string::npos
+                                    || source.find("^(1/3)") != std::string::npos || source.find("^2.5") != std::string::npos
+                                    || source.find("1/2") != std::string::npos;
+                if (rooted && (dependsOn(s, "y") || dependsOn(s, "z"))) {
+                    continue;
+                }
+                INFO("x = " << s.debugString() << " = " << value);
+                CHECK(std::abs(residual) <= 1e-6 * std::max(1.0, std::abs(value)));
+                ++solved;
+            }
+        } catch (const BeyondScope&) {
+        } catch (const Error&) {
+        }
+    }
+    CHECK(integrated > 300);
+    CHECK(solved > 100);
+}

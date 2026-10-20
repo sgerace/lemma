@@ -63,17 +63,6 @@ std::optional<MathNode> defaultUnit(const Dimension& dim)
     return MathNode(MathNode::Kind::Fraction, {std::move(top), product(std::move(denominator))});
 }
 
-// The keywords of docs/symbolic-spec.md, section 9, that come in later steps.
-bool isPlannedKeyword(const std::string& name)
-{
-    for (const char* k : {"solve", "integrate"}) {
-        if (name == k) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // A keyword's arguments: the children after its name. A bare name has none.
 std::span<const MathNode> argumentsOf(const MathNode& k)
 {
@@ -92,9 +81,12 @@ Error placeholderOr(const MathNode& n, const std::string& message)
 struct Operation {
     explicit Operation(std::string n, std::string v = {}) : name(std::move(n)), variable(std::move(v)) {}
 
-    std::string name;      // simplify, expand, substitute, diff
-    std::string variable;  // diff: with respect to
+    std::string name;      // simplify, expand, factor, substitute, diff, solve, integrate
+    std::string variable;  // diff, solve, integrate: with respect to
     int order = 1;         // diff: how many times
+    const MathNode* from = nullptr; // integrate, x, a, b: the limits
+    const MathNode* to = nullptr;
+    int keyword = 0;       // the keyword's node, for errors
     std::vector<std::pair<std::string, const MathNode*>> substitutions; // substitute: name, value
 };
 
@@ -169,14 +161,45 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
                     op.order = std::stoi(n.text);
                 }
                 operations.push_back(std::move(op));
-            } else if (isPlannedKeyword(keyword)) {
-                throw Error(keyword + " isn't available yet", 0, 0, name.id);
+            } else if (keyword == "solve") {
+                // solve, x (9.5)
+                if (args.size() != 1) {
+                    throw Error("solve needs the variable to solve for, like solve, x", 0, 0,
+                                args.empty() ? name.id : args[1].id);
+                }
+                if (args[0].kind != MathNode::Kind::Identifier) {
+                    throw placeholderOr(args[0], "solve solves for a name");
+                }
+                Operation op(keyword, args[0].text);
+                op.keyword = name.id;
+                operations.push_back(std::move(op));
+            } else if (keyword == "integrate") {
+                // integrate, x, or integrate, x, a, b (9.7)
+                if (args.size() != 1 && args.size() != 3) {
+                    throw Error("integrate needs a variable, and its limits if it has them: integrate, x, 0, L", 0, 0,
+                                args.empty() || args.size() == 3 ? name.id : args.back().id);
+                }
+                if (args[0].kind != MathNode::Kind::Identifier) {
+                    throw placeholderOr(args[0], "integrate integrates with respect to a name");
+                }
+                Operation op(keyword, args[0].text);
+                if (args.size() == 3) {
+                    op.from = &args[1];
+                    op.to = &args[2];
+                }
+                operations.push_back(std::move(op));
             } else {
                 throw Error("Unknown keyword: " + keyword, 0, 0, name.id);
             }
         }
         if (operations.empty()) {
             operations.emplace_back("simplify");
+        }
+        // What an operation is with respect to stays a name, even if it's defined above.
+        for (const Operation& op : operations) {
+            if (!op.variable.empty()) {
+                lowering.keep.push_back(op.variable);
+            }
         }
 
         std::vector<std::string> order;
@@ -190,13 +213,36 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
             sides.push_back(exprFromMath(*side, lowering));
         }
 
+        std::string solvedFor; // after solve, sides are its solutions
         for (const Operation& op : operations) {
             if (!result.note.empty()) {
                 break; // an operation beyond its scope ends the work
             }
+            if (op.name == "solve") {
+                if (!solvedFor.empty()) {
+                    throw Error("Only one solve to a region", 0, 0, op.keyword);
+                }
+                try {
+                    // A bare expression is solved for where it's zero (6.3).
+                    sides = solve(sides[0], equation ? sides[1] : Expr(0), op.variable);
+                    solvedFor = op.variable;
+                } catch (const BeyondScope& beyond) {
+                    for (Expr& e : sides) {
+                        e = simplify(e);
+                    }
+                    result.note = beyond.what();
+                }
+                continue;
+            }
             std::vector<std::pair<std::string, Expr>> values;
             for (const auto& [name, value] : op.substitutions) {
                 values.emplace_back(name, exprFromMath(*value, lowering));
+            }
+            std::optional<Expr> from;
+            std::optional<Expr> to;
+            if (op.from) {
+                from = exprFromMath(*op.from, lowering);
+                to = exprFromMath(*op.to, lowering);
             }
             for (Expr& e : sides) {
                 try {
@@ -211,6 +257,8 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
                         }
                     } else if (op.name == "diff") {
                         e = differentiate(e, op.variable, op.order);
+                    } else if (op.name == "integrate") {
+                        e = from ? integrate(e, op.variable, *from, *to) : integrate(e, op.variable);
                     } else if (op.name == "substitute") {
                         // All at once, so substitute, x == y, y == x swaps them.
                         e = simplify(replaceSymbols(e, [&](const Symbol& s) -> std::optional<Expr> {
@@ -238,12 +286,20 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
         }
         display.format = format;
         display.upright = &result.units;
-        std::vector<MathNode> shown;
-        for (const Expr& e : sides) {
-            shown.push_back(mathFromExpr(combineUnits(e, order), display));
+        if (!solvedFor.empty()) {
+            std::vector<Expr> solutions;
+            for (const Expr& e : sides) {
+                solutions.push_back(combineUnits(e, order));
+            }
+            result.symbolic = mathFromSolutions(solvedFor, solutions, display);
+        } else {
+            std::vector<MathNode> shown;
+            for (const Expr& e : sides) {
+                shown.push_back(mathFromExpr(combineUnits(e, order), display));
+            }
+            result.symbolic = equation ? MathNode(MathNode::Kind::Equation, {std::move(shown[0]), std::move(shown[1])})
+                                       : std::move(shown[0]);
         }
-        result.symbolic = equation ? MathNode(MathNode::Kind::Equation, {std::move(shown[0]), std::move(shown[1])})
-                                   : std::move(shown[0]);
         result.value = toLinear(*result.symbolic);
         result.status = RegionResult::Status::Ok;
     } catch (const Error& e) {

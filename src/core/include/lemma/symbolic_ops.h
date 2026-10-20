@@ -46,13 +46,26 @@ bool hasUnfactored(const Expr& factored);
 std::pair<Expr, Expr> splitCommonFactor(const Expr& sum);
 
 // The back end for the operations that are hard in general (section 3). Each returns
-// nothing when the expression is beyond its scope. The in-house engine is the first;
-// solve and integrate join it in a later step.
+// nothing when the expression is beyond its scope. The in-house engine is the first.
 class SymbolicBackend {
 public:
     virtual ~SymbolicBackend() = default;
     virtual std::optional<Expr> factor(const Expr& e) const = 0;
+    // The solutions of lhs = rhs for the variable x; none if it has none.
+    virtual std::optional<std::vector<Expr>> solve(const Expr& lhs, const Expr& rhs, const std::string& x) const = 0;
+    // An antiderivative with respect to x, with no constant of integration.
+    virtual std::optional<Expr> integrate(const Expr& e, const std::string& x) const = 0;
 };
+
+// `solve, x` (section 9.5): every solution, simplified. Throws BeyondScope when it's
+// beyond the back end ("Couldn't solve this for x"), when there's no solution, or when
+// any x is one.
+std::vector<Expr> solve(const Expr& lhs, const Expr& rhs, const std::string& x);
+
+// `integrate, x` and `integrate, x, a, b` (section 9.7), simplified. Throws BeyondScope
+// ("Couldn't integrate this") beyond the back end.
+Expr integrate(const Expr& e, const std::string& x);
+Expr integrate(const Expr& e, const std::string& x, const Expr& from, const Expr& to);
 
 const SymbolicBackend& inHouseBackend();
 

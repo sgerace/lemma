@@ -375,14 +375,14 @@ TEST_CASE("A symbolic evaluation shows its expression simplified")
 
     Worksheet ws;
     const int unknown = ws.addRegion(0, 0, "x -> frobnicate");
-    const int later = ws.addRegion(0, 20, "x -> simplify; solve, x");
+    const int later = ws.addRegion(0, 20, "x^2 - 1 -> solve, x; solve, x");
     const int zero = ws.addRegion(0, 40, "1/(x - x) ->");
     ws.evaluate();
     const Region& u = *ws.region(unknown);
     CHECK(u.result.error == "Unknown keyword: frobnicate");
     CHECK(u.result.errorNode == u.math.children[1].id);
     const Region& l = *ws.region(later);
-    CHECK(l.result.error == "solve isn't available yet");
+    CHECK(l.result.error == "Only one solve to a region");
     CHECK(l.result.errorNode == l.math.children[2].children[0].id);
     const Region& z = *ws.region(zero);
     CHECK(z.result.error == "Division by zero");
@@ -452,7 +452,7 @@ TEST_CASE("Terms in different units of one dimension are converted to the first 
     CHECK(lastValue({"3 mm + 2 m ->"}) == "2.003*10^3 mm"); // as numeric results show it
     CHECK(lastValue({"1 ft + 1 in ->"}) == "1.083 ft");
     CHECK(lastValue({"a := 2", "a*1 m + a*1 cm ->"}) == "2.02 m");
-    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "x*(m + 1 cm)"); // with x free, this m is a name
+    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "m x + x cm"); // with x free, this m is a name
     CHECK(lastValue({"1 kN + 1 N ->"}) == "1.001 kN");
 }
 
@@ -581,4 +581,54 @@ TEST_CASE("Simplify cancels the polynomial factors a fraction shares (9.1)")
     CHECK(lastValue({"(x^2 - y^2)/(x + y) ->"}) == "x - y");
     CHECK(lastValue({"(a*x^2 - a)/(x + 1) ->"}) == "a*(x - 1)");
     CHECK(lastValue({"(x^2 - 5*x + 6)/(x - 1) ->"}) == "(x^2 - 5 x + 6)/(x - 1)"); // nothing shared
+}
+
+TEST_CASE("solve finds every solution (9.5)")
+{
+    CHECK(lastValue({"M == s*I/c -> solve, s"}) == "s == M c/I");
+    CHECK(lastValue({"x^2 - 5*x + 6 -> solve, x"}) == "x == 3, x == 2");
+    CHECK(lastValue({"a*x^2 + b*x + c -> solve, x"}) == "x == (-b ± sqrt(b^2 - 4 a c))/(2 a)");
+    CHECK(lastValue({"F == k*d^2 -> solve, d"}) == "d == ±(sqrt(F)/sqrt(k))");
+    CHECK(lastValue({"y == exp(k*t) -> solve, t"}) == "t == ln(y)/k");
+    CHECK(lastValue({"x^2 == 2 -> solve, x"}) == "x == ±sqrt(2)");
+    CHECK(lastValue({"1/x == a -> solve, x"}) == "x == 1/a");
+    CHECK(lastValue({"ln(x) == 2 -> solve, x"}) == "x == e^2");
+    CHECK(lastValue({"2*x + 3 -> solve, x"}) == "x == -(3/2)"); // a bare expression: where it's zero
+    CHECK(lastValue({"x := 5", "x^2 == 9 -> solve, x"}) == "x == ±3"); // the variable stays a name
+    CHECK(lastValue({"P := 4 kN", "P == k*d -> solve, d"}) == "d == 4 kN/k");
+    CHECK(lastValue({"x^2 == 4*a -> solve, x; substitute, a == 4"}) == "x == ±4"); // then on each
+
+    const auto note = [](std::initializer_list<std::string> lines) {
+        const Worksheet ws = sheet(lines);
+        REQUIRE(last(ws).status == RegionResult::Status::Ok);
+        return last(ws).note;
+    };
+    CHECK(note({"x^5 + x + 1 -> solve, x"}) == "Couldn't solve this for x");
+    CHECK(note({"x^2 + 1 -> solve, x"}) == "There's no real solution for x");
+    CHECK(note({"x + 1 == x -> solve, x"}) == "There's no solution for x");
+    CHECK(note({"x == x -> solve, x"}) == "Any x is a solution");
+}
+
+TEST_CASE("integrate integrates (9.7)")
+{
+    CHECK(lastValue({"x^2 -> integrate, x"}) == "x^3/3");
+    CHECK(lastValue({"1/x -> integrate, x"}) == "ln(x)");
+    CHECK(lastValue({"3*x^2 + 2*x + 1 -> integrate, x"}) == "x^3 + x^2 + x");
+    CHECK(lastValue({"sin(k*x + p) -> integrate, x"}) == "-(cos(k x + p)/k)");
+    CHECK(lastValue({"exp(-a*t) -> integrate, t"}) == "-(e^-(a t)/a)");
+    CHECK(lastValue({"x*sin(k*x) -> integrate, x"}) == "sin(k x)/k^2 - x cos(k x)/k");
+    CHECK(lastValue({"x^2*exp(x) -> integrate, x"}) == "e^x*(x^2 - 2 x + 2)");
+    CHECK(lastValue({"1/(2*x + 1) -> integrate, x"}) == "ln(2 x + 1)/2"); // positive: no |…|
+    CHECK(lastValue({"x/(x + 1)^2 -> integrate, x"}) == "1/(x + 1) + ln(x + 1)");
+    CHECK(lastValue({"1/(x - a) -> integrate, x"}) == "ln(abs(x - a))");
+    CHECK(lastValue({"x*(x + 1) -> integrate, x"}) == "x^3/3 + x^2/2");
+    CHECK(lastValue({"w*x -> integrate, x, 0, L"}) == "w L^2/2");
+    CHECK(lastValue({"w := 2 kN/m", "L := 2.5 m", "w*x -> integrate, x, 0, L"}) == "6.25 kN*m");
+    CHECK(lastValue({"cos(x) -> integrate, x, 0, pi/2"}) == "1");
+
+    const Worksheet ws = sheet({"exp(x^2) -> integrate, x"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).value == "e^x^2");
+    CHECK(last(ws).note == "Couldn't integrate this");
+    CHECK(lastError({"x -> integrate, x, 0"}) == "integrate needs a variable, and its limits if it has them: integrate, x, 0, L");
 }

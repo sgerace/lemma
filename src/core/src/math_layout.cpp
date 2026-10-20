@@ -277,15 +277,18 @@ private:
                 box.append(child(n, 1, level), (script ? 0.05 : 0.15) * sz);
             } else if (n.op == '*' && n.juxtaposed) {
                 box.append(child(n, 1, level), (script ? 0.10 : 3.0 / 18.0) * sz);
+            } else if (n.op == ',') {
+                box.append(text(",", sz)); // a list of solutions
+                box.append(child(n, 1, level), 0.6 * sz);
             } else {
                 const double space = (n.op == '*' ? (script ? 0.03 : 2.0 / 18.0) : (script ? 0.08 : 4.0 / 18.0)) * sz;
-                box.append(text(n.op == '+' ? "+" : n.op == '-' ? "−" : "⋅", sz), space);
+                box.append(text(n.op == '+' ? "+" : n.op == '-' ? "−" : n.op == '~' ? "±" : "⋅", sz), space);
                 box.append(child(n, 1, level), space);
             }
             break;
         }
         case Kind::Negate:
-            box = text("−", sz);
+            box = text(n.op == '~' ? "±" : "−", sz);
             box.append(child(n, 0, level));
             break;
         case Kind::Fraction:

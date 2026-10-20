@@ -364,9 +364,29 @@ substituted, units after a number).
 - `x` inside one invertible function or power: undoes it (`F ⩵ k d²` gives
   `d = √(F/k)` and `d = −√(F/k)`; `y ⩵ e^(k t)` gives `t = ln(y)/k`).
 - Several solutions are shown as a list, `σ = …, σ = …`, until matrices (#27) allow a
-  column; two that differ only in a radical's sign are shown as one, with `±` (5.3).
-- Beyond that, through the back end; the in-house one returns "Couldn't solve this
-  for x".
+  column; two that differ only in a radical's sign, or only in sign, are shown as one,
+  with `±` (5.3), over the root's denominator when the rest shares it:
+  `x = (−b ± √(b² − 4 a c))/(2 a)`.
+- Beyond that, through the back end; the in-house one leaves the input with the note
+  "Couldn't solve this for x".
+
+How the in-house one works: x in a denominator is multiplied through; a factor of a
+product is solved on its own (a denominator never is zero); a polynomial in x is
+factored, or solved by degree (linear, the quadratic formula); otherwise the one term
+with x in it is moved across and undone, a function or power at a time (an even power
+gives both roots, `|g| = v` gives `g = ±v`, `e^g = v` gives `g = ln v`, `sin g = v`
+the principal `g = asin v`).
+
+Each solution is put back: one that leaves a value that can't be zero (a nonzero
+number, something positive or negative, or a value with no variables away from zero)
+is dropped, as `√x = −3` gives no `x = 9`. A solution found by undoing a root or `|…|`
+may still hold only for some values of the other names (`√(x z) = (z − 3) y` needs
+`z ≥ 3`); it's kept, as Mathcad does, since those conditions aren't shown. With no
+solution left, or none at all, the note says so ("There's no real solution for x",
+"There's no solution for x", "Any x is a solution").
+
+The variable solved for, like those of `diff` and `integrate`, stays a name even when
+it's defined above: with `x := 5` above, `x² ⩵ 9 → solve, x` is `x = ±3`.
 
 ### 9.6 `diff, x` (and `diff, x, n`)
 
@@ -392,7 +412,15 @@ written. With an equation, each operation applies to both sides.
 - Definite: the indefinite integral, evaluated at the limits and simplified. Limits
   may be symbols or have units, and the result's dimension is the integrand's times
   `x`'s.
-- Beyond that, the integral is returned unevaluated with "Couldn't integrate this".
+- Beyond that, the input is returned with the note "Couldn't integrate this".
+- `ln` of a linear argument is `ln|a x + b|`, or `ln(a x + b)` when that's positive,
+  as it is with `a` and `b` positive (5.3).
+
+How the in-house one works: linearity; a power of x or of a linear argument; an
+exponential, `sin`, `cos`, `tan` or `ln` of one; by parts, repeatedly, for a
+polynomial times `sin`, `cos` or an exponential of a linear argument; a polynomial over
+a power of a linear factor, through `u = a x + b`; and failing those, the integrand
+multiplied out. Each antiderivative is simplified.
 
 ## 10. Evaluation and storage
 
@@ -458,7 +486,7 @@ Each assumes nothing is defined above unless shown.
 | cantilever values above; `P L³/(3 E I) →` | `0.025 m` | units tidied in a product (8) |
 | `½ m v² →` | `m v²/2` | free names: `m` is a mass (8) |
 | `1 m + 1 kg →` | Units don't match: m and kg | an error, as numerically |
-| `e^(x²) →` with `integrate, x` | `∫ e^(x²) dx`, "Couldn't integrate this" | beyond the scope; not an error |
+| `e^(x²) →` with `integrate, x` | `e^(x²)`, "Couldn't integrate this" | beyond the scope; not an error |
 | `√(x²) →` | `x` | symbols are positive (5.3) |
 | `√(y²) →` with `real, y` | `\|y\|` | the opt-out (5.3) |
 | `θ(x) := y(x) →` with `diff, x`, with `y` as above | `P x (2 L − x)/(2 E I)`; `θ(L) =` then evaluates | symbolic definition (7.1) |
