@@ -552,3 +552,33 @@ TEST_CASE("diff differentiates (9.6)")
     CHECK(lastError({"x -> diff"}) == "diff needs a variable, like diff, x");
     CHECK(lastError({"x -> diff, x, 0"}) == "How many times to differentiate: a whole number, like 2");
 }
+
+TEST_CASE("factor takes out common factors and factors polynomials (9.3)")
+{
+    CHECK(lastValue({"6*a*x + 9*a -> factor"}) == "3 a*(2 x + 3)"); // Copy writes "*" between a name and "("
+    CHECK(lastValue({"x^2 - 5*x + 6 -> factor"}) == "(x - 3) (x - 2)");
+    CHECK(lastValue({"2*x^2 + x - 1 -> factor"}) == "(x + 1) (2 x - 1)");
+    CHECK(lastValue({"x^2 - y^2 -> factor"}) == "(x - y) (x + y)");
+    CHECK(lastValue({"x^2 + 2*x*y + y^2 -> factor"}) == "(x + y)^2");
+    CHECK(lastValue({"x^3 - 8 -> factor"}) == "(x - 2) (x^2 + 2 x + 4)");
+    CHECK(lastValue({"x^4 - y^4 -> factor"}) == "(x - y) (x + y) (x^2 + y^2)");
+    CHECK(lastValue({"x^2 - 2 -> factor"}) == "(x - sqrt(2)) (x + sqrt(2))");
+    CHECK(lastValue({"sin(t)^2 - 1 -> factor"}) == "(sin(t) - 1) (sin(t) + 1)");
+    CHECK(lastValue({"(x^2 - 1)/(x + 2) -> factor"}) == "(x - 1) (x + 1)/(x + 2)");
+
+    // What it can't factor further comes with a note.
+    const Worksheet ws = sheet({"x^2 + 1 -> factor"});
+    CHECK(last(ws).value == "x^2 + 1");
+    CHECK(last(ws).note == "Couldn't factor this further");
+    CHECK(sheet({"x^2 - 1 -> factor"}).regions().back().result.note.empty());
+}
+
+TEST_CASE("Simplify cancels the polynomial factors a fraction shares (9.1)")
+{
+    CHECK(lastValue({"(x^2 - 1)/(x - 1) ->"}) == "x + 1");
+    CHECK(lastValue({"(x^3 - 1)/(x - 1) ->"}) == "x^2 + x + 1");
+    CHECK(lastValue({"(x^2 - 5*x + 6)/(x - 2) ->"}) == "x - 3");
+    CHECK(lastValue({"(x^2 - y^2)/(x + y) ->"}) == "x - y");
+    CHECK(lastValue({"(a*x^2 - a)/(x + 1) ->"}) == "a*(x - 1)");
+    CHECK(lastValue({"(x^2 - 5*x + 6)/(x - 1) ->"}) == "(x^2 - 5 x + 6)/(x - 1)"); // nothing shared
+}

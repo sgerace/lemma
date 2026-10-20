@@ -66,7 +66,7 @@ std::optional<MathNode> defaultUnit(const Dimension& dim)
 // The keywords of docs/symbolic-spec.md, section 9, that come in later steps.
 bool isPlannedKeyword(const std::string& name)
 {
-    for (const char* k : {"factor", "solve", "integrate"}) {
+    for (const char* k : {"solve", "integrate"}) {
         if (name == k) {
             return true;
         }
@@ -132,7 +132,7 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
                     }
                     (keyword == "keep" ? lowering.keep : lowering.real).push_back(arg.text);
                 }
-            } else if (keyword == "simplify" || keyword == "expand") {
+            } else if (keyword == "simplify" || keyword == "expand" || keyword == "factor") {
                 if (!args.empty()) {
                     throw Error(keyword + " takes no arguments", 0, 0, args[0].id);
                 }
@@ -204,6 +204,11 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
                         e = simplify(e);
                     } else if (op.name == "expand") {
                         e = expand(e);
+                    } else if (op.name == "factor") {
+                        e = factor(e);
+                        if (hasUnfactored(e)) {
+                            result.note = "Couldn't factor this further";
+                        }
                     } else if (op.name == "diff") {
                         e = differentiate(e, op.variable, op.order);
                     } else if (op.name == "substitute") {

@@ -4,7 +4,9 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lemma {
@@ -29,6 +31,30 @@ Expr expand(const Expr& e, std::size_t maxTerms = 5000);
 // `diff, x, n` (section 9.6): the nth derivative with respect to the variable `x`,
 // simplified. Throws BeyondScope for a call to an undefined function of x.
 Expr differentiate(const Expr& e, const std::string& x, int n = 1);
+
+// `factor` (section 9.3): common factors taken out, and polynomials factored where
+// they have rational roots (in one variable, or homogeneous in two: x² − y²), or are
+// quadratics with real roots. Sums it can't factor are left multiplied out.
+Expr factor(const Expr& e);
+
+// True if `factor` would leave a polynomial of degree two or more unfactored in `e`:
+// "Couldn't factor this further".
+bool hasUnfactored(const Expr& factored);
+
+// What a sum's terms have in common, and what's left, with whole coefficients:
+// P x L − P x²/2 is P x/2 and 2 L − x. For anything else, 1 and the expression.
+std::pair<Expr, Expr> splitCommonFactor(const Expr& sum);
+
+// The back end for the operations that are hard in general (section 3). Each returns
+// nothing when the expression is beyond its scope. The in-house engine is the first;
+// solve and integrate join it in a later step.
+class SymbolicBackend {
+public:
+    virtual ~SymbolicBackend() = default;
+    virtual std::optional<Expr> factor(const Expr& e) const = 0;
+};
+
+const SymbolicBackend& inHouseBackend();
 
 // True if the expression has the variable `name` in it.
 bool dependsOn(const Expr& e, const std::string& name);

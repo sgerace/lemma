@@ -313,7 +313,10 @@ factor this further"). That is not an error: the region still counts as evaluate
 The canonical form, plus:
 
 - Cancelling common factors of a fraction's numerator and denominator, including
-  polynomial factors found by `factor` (`(x² − 1)/(x − 1)` is `x + 1`).
+  polynomial factors found by `factor` (`(x² − 1)/(x − 1)` is `x + 1`). The
+  numerator and denominator are factored only to cancel: when they share no factor,
+  they're left as they were, and what's left after cancelling is multiplied out again
+  (`(x³ − 1)/(x − 1)` is `x² + x + 1`).
 - Combining fractions over a common denominator when that makes the result shorter.
 - `sin²θ + cos²θ = 1`; `e^(ln x) = x`; `ln(e^x) = x`; values at standard angles
   (`sin(π/6) = 1/2`).
@@ -337,6 +340,16 @@ than a few thousand terms is an error ("This expands to too many terms").
   when its roots are real).
 - Recognizes `a² − b²`, `a² ± 2ab + b²`, and `a³ ± b³`.
 - Beyond that, through the back end; the in-house one stops.
+
+How the in-house one works: a sum is multiplied out and its common factor taken out
+(as simplify does), then treated as a polynomial in one of its variables, or in a
+function of them (`sin² t − 1` is `(sin t − 1)(sin t + 1)`), trying those of highest
+degree first. The polynomial's coefficients must be numbers, or one monomial's powers
+(homogeneous: `x² − 5 x y + 6 y²`), and its rational roots are found from the divisors
+of its first and last coefficients (up to 10¹²), so `a² ± 2ab + b²` and `a³ ± b³` need
+no rules of their own. Each factor found is factored again (`x⁴ − y⁴` is
+`(x − y)(x + y)(x² + y²)`). A sum of degree two or more left unfactored gets the note
+"Couldn't factor this further", as `x² + 1` does.
 
 ### 9.4 `substitute, x ⩵ value` (repeatable: `substitute, x ⩵ 1, y ⩵ 2`)
 

@@ -143,10 +143,12 @@ std::int64_t gcd64(std::int64_t a, std::int64_t b)
 // A sum with what its terms have in common taken out: the factors in every term, to
 // their lowest power, and the coefficients' common part, so the sum left has whole
 // coefficients: P x L − P x²/2 is (P x/2)(2 L − x).
-Expr commonFactor(const Expr& sum)
+} // namespace
+
+std::pair<Expr, Expr> splitCommonFactor(const Expr& sum)
 {
     if (sum.kind() != Expr::Kind::Sum || !sum.constant().isZero()) {
-        return sum;
+        return {Expr(1), sum};
     }
     const std::vector<ExprTerm>& terms = sum.terms();
     std::vector<ExprFactor> common = factorsOf(terms[0].expr);
@@ -200,14 +202,93 @@ Expr commonFactor(const Expr& sum)
     }
     const Expr outside = Expr::product(monomial);
     if (outside == Expr(1)) {
-        return sum;
+        return {outside, sum};
     }
     std::vector<Expr> inside;
     for (const ExprTerm& t : terms) {
         inside.push_back(Expr(t.coefficient) * t.expr / outside);
     }
-    // A product, not multiplied back in: built factor by factor.
-    return Expr::product({outside, Expr::pow(Expr::sum(inside), Expr(1))});
+    return {outside, Expr::sum(inside)};
+}
+
+namespace {
+
+Expr commonFactor(const Expr& sum)
+{
+    const auto [outside, inside] = splitCommonFactor(sum);
+    // A product, not multiplied back in.
+    return outside == Expr(1) ? sum : Expr::product({outside, inside});
+}
+
+// A fraction with the polynomial factors its numerator and denominator share cancelled:
+// (x² − 1)/(x − 1) is x + 1 (section 9.1). Unchanged when they share none, so
+// (x² − 5 x + 6)/(x − 1) stays multiplied out.
+Expr cancel(const Expr& product)
+{
+    if (product.kind() != Expr::Kind::Product) {
+        return product;
+    }
+    const auto whole = [](const Expr& e) { return e.isNumber() && e.number().isInteger(); };
+    std::vector<Expr> up;
+    std::vector<Expr> down;
+    std::vector<Expr> others{Expr(product.coefficient())};
+    for (const ExprFactor& f : product.factors()) {
+        if (f.base.kind() == Expr::Kind::Sum && whole(f.exponent)) {
+            (f.exponent.number().isNegative() ? down : up).push_back(Expr::pow(f.base, f.exponent));
+        } else {
+            others.push_back(Expr::pow(f.base, f.exponent));
+        }
+    }
+    if (up.empty() || down.empty()) {
+        return product;
+    }
+    const Expr top = factor(Expr::product(up));
+    const Expr bottom = factor(Expr::pow(Expr::product(down), Expr(-1)));
+    const auto bases = [](const Expr& e) {
+        std::vector<Expr> out;
+        for (const ExprFactor& f : e.kind() == Expr::Kind::Product ? e.factors() : std::vector<ExprFactor>{{e, Expr(1)}}) {
+            if (f.base.kind() == Expr::Kind::Sum) {
+                out.push_back(f.base);
+            }
+        }
+        return out;
+    };
+    const std::vector<Expr> topBases = bases(top);
+    const std::vector<Expr> bottomBases = bases(bottom);
+    const bool shared = std::any_of(topBases.begin(), topBases.end(), [&](const Expr& b) {
+        return std::find(bottomBases.begin(), bottomBases.end(), b) != bottomBases.end();
+    });
+    if (!shared) {
+        return product;
+    }
+    // What's left of the numerator and denominator multiplied out again, as typed.
+    const Expr left = top / bottom;
+    std::vector<Expr> numerator;
+    std::vector<Expr> denominator;
+    if (left.kind() == Expr::Kind::Product) {
+        others.emplace_back(left.coefficient());
+    }
+    for (const ExprFactor& f : left.kind() == Expr::Kind::Product ? left.factors() : std::vector<ExprFactor>{{left, Expr(1)}}) {
+        if (f.base.kind() == Expr::Kind::Sum && whole(f.exponent)) {
+            if (f.exponent.number().isNegative()) {
+                denominator.push_back(Expr::pow(f.base, -f.exponent));
+            } else {
+                numerator.push_back(Expr::pow(f.base, f.exponent));
+            }
+        } else {
+            others.push_back(Expr::pow(f.base, f.exponent));
+        }
+    }
+    const auto multipliedOut = [](const std::vector<Expr>& part) {
+        try {
+            return expand(Expr::product(part), 200);
+        } catch (const Error&) {
+            return Expr::product(part);
+        }
+    };
+    others.push_back(multipliedOut(numerator));
+    others.push_back(Expr::pow(multipliedOut(denominator), Expr(-1)));
+    return Expr::product(others);
 }
 
 // A sum's terms over the same denominator combined, as an expression.
@@ -461,7 +542,7 @@ Expr simplify(const Expr& e)
         for (const ExprFactor& f : e.factors()) {
             parts.push_back(Expr::pow(simplify(f.base), simplify(f.exponent)));
         }
-        return Expr::product(parts);
+        return cancel(Expr::product(parts));
     }
     case Expr::Kind::Function:
         return Expr::apply(e.function(), simplify(e.argument()));
