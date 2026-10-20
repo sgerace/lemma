@@ -452,7 +452,7 @@ TEST_CASE("Terms in different units of one dimension are converted to the first 
     CHECK(lastValue({"3 mm + 2 m ->"}) == "2.003*10^3 mm"); // as numeric results show it
     CHECK(lastValue({"1 ft + 1 in ->"}) == "1.083 ft");
     CHECK(lastValue({"a := 2", "a*1 m + a*1 cm ->"}) == "2.02 m");
-    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "m x + x cm"); // with x free, this m is a name
+    CHECK(lastValue({"d := 1 cm", "x*1 m + x*d -> keep, x"}) == "x*(m + 1 cm)"); // with x free, this m is a name
     CHECK(lastValue({"1 kN + 1 N ->"}) == "1.001 kN");
 }
 
@@ -504,4 +504,51 @@ TEST_CASE("A product's units are tidied, and measurements shown as decimals (8)"
     CHECK(with("P*L^3/(3*E*I) -> keep, P, L, E, I") == "P L^3/(3 E I)");
     CHECK(lastValue({"1 m*1 mm ->"}) == "0.001 m^2");
     CHECK(lastValue({"1 cm/(1 mm) ->"}) == "10"); // no units left
+}
+
+TEST_CASE("expand multiplies out (9.2)")
+{
+    CHECK(lastValue({"(a + b)^3 -> expand"}) == "a^3 + 3 a^2 b + 3 a b^2 + b^3");
+    CHECK(lastValue({"(x + 1)*(x - 1) -> expand"}) == "x^2 - 1");
+    CHECK(lastValue({"(a + b)/c -> expand"}) == "a/c + b/c");
+    CHECK(lastValue({"1/(x + 1)^2 -> expand"}) == "1/(x^2 + 2 x + 1)");
+    CHECK(lastValue({"ln(2*x*y^2) -> expand"}) == "ln(x) + 2 ln(y) + ln(2)");
+    CHECK(lastValue({"2*(x + 1) -> expand"}) == "2 x + 2");
+    CHECK(lastError({"(a + b + c + d + e1)^40 -> expand"}) == "This expands to too many terms");
+}
+
+TEST_CASE("substitute replaces names, then simplifies (9.4)")
+{
+    CHECK(lastValue({"x^2 + y -> substitute, x == 3"}) == "y + 9");
+    CHECK(lastValue({"x - y -> substitute, x == y, y == x"}) == "-x + y"); // all at once
+    CHECK(lastValue({"a*x -> substitute, x == 2 m"}) == "2 a m");
+    CHECK(lastValue({"x^2 -> substitute, x == a + 1; expand"}) == "a^2 + 2 a + 1");
+    CHECK(lastError({"x -> substitute"}) == "substitute needs what to replace, like substitute, x == 1");
+    CHECK(lastError({"x -> substitute, x"}) == "Write what to substitute as name == value (Ctrl+=)");
+}
+
+TEST_CASE("diff differentiates (9.6)")
+{
+    CHECK(lastValue({"x^3 -> diff, x"}) == "3 x^2");
+    CHECK(lastValue({"x^3 -> diff, x, 2"}) == "6 x");
+    CHECK(lastValue({"a*x^2 + b*x + c -> diff, x"}) == "2 a x + b");
+    CHECK(lastValue({"sin(k*x) -> diff, x"}) == "k cos(k x)");
+    CHECK(lastValue({"exp(-k*t) -> diff, t"}) == "-(k e^-(k t))");
+    CHECK(lastValue({"ln(x) -> diff, x"}) == "1/x");
+    CHECK(lastValue({"sqrt(x) -> diff, x"}) == "1/(2 sqrt(x))");
+    CHECK(lastValue({"x*sin(x) -> diff, x"}) == "x cos(x) + sin(x)");
+    CHECK(lastValue({"a^x -> diff, x"}) == "a^x ln(a)");
+    CHECK(lastValue({"atan(x) -> diff, x"}) == "1/(x^2 + 1)");
+    CHECK(lastValue({"y -> diff, x"}) == "0");
+    // The beam: deflection to slope, with the names kept.
+    CHECK(lastValue({"y(x) := P*x^2*(3*L - x)/(6*E*I)", "y(x) -> diff, x"}) == "P x*(2 L - x)/(2 E I)");
+
+    // An undefined function is beyond diff's scope: a note, not an error.
+    const Worksheet ws = sheet({"f(x) + x^2 -> diff, x"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).value == "x^2 + f(x)");
+    CHECK(last(ws).note == "Couldn't differentiate f, a function with no definition");
+
+    CHECK(lastError({"x -> diff"}) == "diff needs a variable, like diff, x");
+    CHECK(lastError({"x -> diff, x, 0"}) == "How many times to differentiate: a whole number, like 2");
 }

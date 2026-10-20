@@ -234,18 +234,21 @@ TEST_CASE("A result's text parses back to the same expression")
     }
 }
 
-// Random expressions, checked against numeric evaluation: the symbolic result must
-// have the same value as the expression typed, at random positive values.
-TEST_CASE("Results have the same value as what was typed")
-{
-    std::mt19937 rng(16);
-    const auto pick = [&](int n) { return std::uniform_int_distribution<int>(0, n - 1)(rng); };
-    // No π: sin(π) is exactly 0 here but not numerically, so ln(sin(π)) would differ.
-    const std::vector<std::string> atoms = {"x", "y", "z", "2", "3", "1/2", "0.5", "x", "y", "z"};
-    const std::vector<std::string> exponents = {"2", "3", "-1", "1/2", "-1/2", "(1/3)", "0", "2.5"};
-    const std::vector<std::string> functions = {"sqrt", "sin", "cos", "ln", "exp", "abs"};
+namespace {
 
-    std::function<std::string(int)> generate = [&](int depth) -> std::string {
+// Random expressions in x, y and z, as linear text.
+struct RandomExpressions {
+    std::mt19937 rng{16};
+
+    int pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(rng); }
+    double value() { return 0.5 + std::uniform_real_distribution<double>(0, 2.5)(rng); }
+
+    std::string generate(int depth)
+    {
+        // No π: sin(π) is exactly 0 here but not numerically, so ln(sin(π)) would differ.
+        static const std::vector<std::string> atoms = {"x", "y", "z", "2", "3", "1/2", "0.5", "x", "y", "z"};
+        static const std::vector<std::string> exponents = {"2", "3", "-1", "1/2", "-1/2", "(1/3)", "0", "2.5"};
+        static const std::vector<std::string> functions = {"sqrt", "sin", "cos", "ln", "exp", "abs"};
         if (depth == 0 || pick(4) == 0) {
             return atoms[static_cast<std::size_t>(pick(static_cast<int>(atoms.size())))];
         }
@@ -258,7 +261,27 @@ TEST_CASE("Results have the same value as what was typed")
         case 5: return functions[static_cast<std::size_t>(pick(6))] + "(" + generate(depth - 1) + ")";
         default: return "-" + generate(depth - 1);
         }
-    };
+    }
+};
+
+// An expression's value, shown to 12 places and evaluated numerically.
+double valueOf(const Expr& e, const MathNode& from, const Environment& env)
+{
+    ExprDisplayOptions options = orderOf(from);
+    options.format.decimals = 12;
+    options.format.exponentialThreshold = 15;
+    return evaluate(*lowerExpression(mathFromExpr(e, options)), env).value;
+}
+
+} // namespace
+
+// Random expressions, checked against numeric evaluation: the symbolic result must
+// have the same value as the expression typed, at random positive values.
+TEST_CASE("Results have the same value as what was typed")
+{
+    RandomExpressions random;
+    const auto generate = [&](int depth) { return random.generate(depth); };
+    auto& rng = random.rng;
 
     int checked = 0;
     for (int run = 0; run < 3000; ++run) {
@@ -301,4 +324,51 @@ TEST_CASE("Results have the same value as what was typed")
         ++checked;
     }
     CHECK(checked > 1000);
+}
+
+// expand and diff, checked numerically: an expansion has the expression's value, and a
+// derivative matches the slope from a central difference.
+TEST_CASE("Expansions and derivatives have the right values")
+{
+    RandomExpressions random;
+    int checked = 0;
+    for (int run = 0; run < 2000; ++run) {
+        const std::string source = random.generate(3);
+        const MathNode tree = mathFromLinear(source);
+        const double x = random.value();
+        const double y = random.value();
+        const double h = 1e-5;
+        const auto at = [&](double dx) {
+            Environment env;
+            env.define("x", Quantity::scalar(x + dx));
+            env.define("y", Quantity::scalar(y));
+            env.define("z", Quantity::scalar(1.3));
+            return env;
+        };
+        double f = 0.0;
+        double slope = 0.0;
+        try {
+            f = evaluate(*lowerExpression(tree), at(0)).value;
+            slope = (evaluate(*lowerExpression(tree), at(h)).value - evaluate(*lowerExpression(tree), at(-h)).value)
+                    / (2 * h);
+        } catch (const Error&) {
+            continue;
+        }
+        if (!std::isfinite(f) || !std::isfinite(slope) || std::abs(f) > 1e6 || std::abs(slope) > 1e6) {
+            continue;
+        }
+        INFO(source);
+        const Expr e = exprFromMath(tree);
+        try {
+            CHECK(std::abs(valueOf(expand(e), tree, at(0)) - f) <= 1e-6 * std::max(1.0, std::abs(f)));
+            const Expr d = differentiate(e, "x");
+            INFO("d/dx -> " << d.debugString());
+            CHECK(std::abs(valueOf(d, tree, at(0)) - slope) <= 1e-4 * std::max(1.0, std::abs(slope)));
+        } catch (const Error& err) {
+            INFO(err.what());
+            CHECK(false);
+        }
+        ++checked;
+    }
+    CHECK(checked > 500);
 }

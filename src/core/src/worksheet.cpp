@@ -66,7 +66,7 @@ std::optional<MathNode> defaultUnit(const Dimension& dim)
 // The keywords of docs/symbolic-spec.md, section 9, that come in later steps.
 bool isPlannedKeyword(const std::string& name)
 {
-    for (const char* k : {"expand", "factor", "substitute", "solve", "diff", "integrate"}) {
+    for (const char* k : {"factor", "solve", "integrate"}) {
         if (name == k) {
             return true;
         }
@@ -74,9 +74,33 @@ bool isPlannedKeyword(const std::string& name)
     return false;
 }
 
+// A keyword's arguments: the children after its name. A bare name has none.
+std::span<const MathNode> argumentsOf(const MathNode& k)
+{
+    if (k.kind != MathNode::Kind::Keyword) {
+        return {};
+    }
+    return std::span<const MathNode>(k.children).subspan(1);
+}
+
+Error placeholderOr(const MathNode& n, const std::string& message)
+{
+    return Error(n.kind == MathNode::Kind::Placeholder ? "Fill in the placeholder" : message, 0, 0, n.id);
+}
+
+// An operation keyword, ready to apply.
+struct Operation {
+    explicit Operation(std::string n, std::string v = {}) : name(std::move(n)), variable(std::move(v)) {}
+
+    std::string name;      // simplify, expand, substitute, diff
+    std::string variable;  // diff: with respect to
+    int order = 1;         // diff: how many times
+    std::vector<std::pair<std::string, const MathNode*>> substitutions; // substitute: name, value
+};
+
 // expression → result (docs/symbolic-spec.md). Names defined above are substituted,
-// except those `keep` lists; with no other keyword, or `simplify`, the result is the
-// expression simplified, and an equation's sides are simplified each.
+// except those `keep` lists. The operation keywords apply left to right; with none,
+// the expression is simplified. An equation's sides are each worked on.
 RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const SymbolicDefinition> definitions,
                                     const FormatOptions& format)
 {
@@ -85,6 +109,7 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
     try {
         LowerOptions lowering;
         lowering.definitions = definitions;
+        std::vector<Operation> operations;
         for (std::size_t i = 1; i < math.children.size(); ++i) {
             const MathNode& k = math.children[i];
             if (k.kind == MathNode::Kind::Placeholder) {
@@ -94,30 +119,64 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
             if (name.kind != MathNode::Kind::Identifier) {
                 throw Error("Fill in the placeholder", 0, 0, name.id);
             }
-            const bool modifier = name.text == "keep" || name.text == "real";
-            if (modifier) {
+            const std::span<const MathNode> args = argumentsOf(k);
+            const std::string& keyword = name.text;
+            if (keyword == "keep" || keyword == "real") {
                 // keep, L, P: the names to leave symbolic (7); real, y: the names that may be negative (5.3).
-                if (k.kind != MathNode::Kind::Keyword) {
-                    throw Error(name.text + " needs the names it applies to, like " + name.text + ", x", 0, 0, name.id);
+                if (args.empty()) {
+                    throw Error(keyword + " needs the names it applies to, like " + keyword + ", x", 0, 0, name.id);
                 }
-                for (std::size_t j = 1; j < k.children.size(); ++j) {
-                    const MathNode& arg = k.children[j];
+                for (const MathNode& arg : args) {
                     if (arg.kind != MathNode::Kind::Identifier) {
-                        throw Error(arg.kind == MathNode::Kind::Placeholder ? "Fill in the placeholder"
-                                                                            : name.text + " takes names",
-                                    0, 0, arg.id);
+                        throw placeholderOr(arg, keyword + " takes names");
                     }
-                    (name.text == "keep" ? lowering.keep : lowering.real).push_back(arg.text);
+                    (keyword == "keep" ? lowering.keep : lowering.real).push_back(arg.text);
                 }
-            } else if (name.text == "simplify") {
-                if (k.kind == MathNode::Kind::Keyword) {
-                    throw Error("simplify takes no arguments", 0, 0, k.children[1].id);
+            } else if (keyword == "simplify" || keyword == "expand") {
+                if (!args.empty()) {
+                    throw Error(keyword + " takes no arguments", 0, 0, args[0].id);
                 }
-            } else if (isPlannedKeyword(name.text)) {
-                throw Error(name.text + " isn't available yet", 0, 0, name.id);
+                operations.emplace_back(keyword);
+            } else if (keyword == "substitute") {
+                // substitute, x == 1, y == 2 (9.4)
+                if (args.empty()) {
+                    throw Error("substitute needs what to replace, like substitute, x == 1", 0, 0, name.id);
+                }
+                Operation op(keyword);
+                for (const MathNode& arg : args) {
+                    if (arg.kind != MathNode::Kind::Equation || arg.children[0].kind != MathNode::Kind::Identifier) {
+                        throw placeholderOr(arg, "Write what to substitute as name == value (Ctrl+=)");
+                    }
+                    op.substitutions.emplace_back(arg.children[0].text, &arg.children[1]);
+                }
+                operations.push_back(std::move(op));
+            } else if (keyword == "diff") {
+                // diff, x, or diff, x, n (9.6)
+                if (args.empty() || args.size() > 2) {
+                    throw Error("diff needs a variable, like diff, x", 0, 0, args.empty() ? name.id : args[2].id);
+                }
+                if (args[0].kind != MathNode::Kind::Identifier) {
+                    throw placeholderOr(args[0], "diff differentiates with respect to a name");
+                }
+                Operation op(keyword, args[0].text);
+                if (args.size() == 2) {
+                    const MathNode& n = args[1];
+                    const bool digits = n.kind == MathNode::Kind::Number
+                                        && n.text.find_first_not_of("0123456789") == std::string::npos;
+                    if (!digits || n.text.size() > 2 || std::stoi(n.text) < 1) {
+                        throw placeholderOr(n, "How many times to differentiate: a whole number, like 2");
+                    }
+                    op.order = std::stoi(n.text);
+                }
+                operations.push_back(std::move(op));
+            } else if (isPlannedKeyword(keyword)) {
+                throw Error(keyword + " isn't available yet", 0, 0, name.id);
             } else {
-                throw Error("Unknown keyword: " + name.text, 0, 0, name.id);
+                throw Error("Unknown keyword: " + keyword, 0, 0, name.id);
             }
+        }
+        if (operations.empty()) {
+            operations.emplace_back("simplify");
         }
 
         std::vector<std::string> order;
@@ -131,13 +190,52 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
             sides.push_back(exprFromMath(*side, lowering));
         }
 
+        for (const Operation& op : operations) {
+            if (!result.note.empty()) {
+                break; // an operation beyond its scope ends the work
+            }
+            std::vector<std::pair<std::string, Expr>> values;
+            for (const auto& [name, value] : op.substitutions) {
+                values.emplace_back(name, exprFromMath(*value, lowering));
+            }
+            for (Expr& e : sides) {
+                try {
+                    if (op.name == "simplify") {
+                        e = simplify(e);
+                    } else if (op.name == "expand") {
+                        e = expand(e);
+                    } else if (op.name == "diff") {
+                        e = differentiate(e, op.variable, op.order);
+                    } else if (op.name == "substitute") {
+                        // All at once, so substitute, x == y, y == x swaps them.
+                        e = simplify(replaceSymbols(e, [&](const Symbol& s) -> std::optional<Expr> {
+                            for (const auto& [name, value] : values) {
+                                if (s.kind == Symbol::Kind::Variable && s.name == name) {
+                                    return value;
+                                }
+                            }
+                            return std::nullopt;
+                        }));
+                    }
+                } catch (const BeyondScope& beyond) {
+                    e = simplify(e);
+                    result.note = beyond.what();
+                }
+            }
+        }
+
         ExprDisplayOptions display;
         display.order = order;
+        for (const Operation& op : operations) {
+            if (!op.variable.empty()) {
+                display.main = op.variable;
+            }
+        }
         display.format = format;
         display.upright = &result.units;
         std::vector<MathNode> shown;
         for (const Expr& e : sides) {
-            shown.push_back(mathFromExpr(combineUnits(simplify(e), order), display));
+            shown.push_back(mathFromExpr(combineUnits(e, order), display));
         }
         result.symbolic = equation ? MathNode(MathNode::Kind::Equation, {std::move(shown[0]), std::move(shown[1])})
                                    : std::move(shown[0]);
@@ -147,6 +245,7 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
         result.status = RegionResult::Status::Error;
         result.error = e.what();
         result.errorNode = e.node();
+        result.note.clear();
     }
     return result;
 }

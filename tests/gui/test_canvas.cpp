@@ -992,6 +992,17 @@ private slots:
         QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("6 m^2"));
     }
 
+    void anOperationBeyondItsScopeShowsANote()
+    {
+        const int plain = sheet().addRegion(72, 120, "x^2 -> diff, x");
+        const int noted = sheet().addRegion(288, 120, "f(x) -> diff, x");
+        canvas_->worksheetReset();
+        const lemma::Region& n = *sheet().region(noted);
+        QCOMPARE(n.result.status, lemma::RegionResult::Status::Ok); // not an error
+        QVERIFY(!n.result.note.empty());
+        QVERIFY(canvas_->regionRect(n).height() > canvas_->regionRect(*sheet().region(plain)).height());
+    }
+
     void saveAndLoadSymbolicEvaluations()
     {
         sheet().addRegion(72, 96, "x^2*x ->");
@@ -1008,7 +1019,7 @@ private slots:
             QVERIFY(loaded.regions()[i].math.sameAs(sheet().regions()[i].math));
         }
         QCOMPARE(value(loaded.regions()[0]), QStringLiteral("x^3")); // recomputed, not saved
-        QCOMPARE(loaded.regions()[1].result.error, std::string("substitute isn't available yet"));
+        QCOMPARE(value(loaded.regions()[1]), QStringLiteral("a == 2 c"));
     }
 
     void saveAndLoadRoundTrip()

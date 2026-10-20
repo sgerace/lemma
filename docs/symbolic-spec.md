@@ -317,7 +317,11 @@ The canonical form, plus:
 - Combining fractions over a common denominator when that makes the result shorter.
 - `sin²θ + cos²θ = 1`; `e^(ln x) = x`; `ln(e^x) = x`; values at standard angles
   (`sin(π/6) = 1/2`).
-- Choosing between expanded and factored forms by a size measure: the shorter wins.
+- Choosing the shortest of these forms by a size measure (a count of the expression's
+  parts): the sum as it is, over common denominators, multiplied out (up to 200
+  terms), and with what its terms have in common taken out, so that the sum left has
+  whole coefficients: `P x L − P x²/2` is `P x (2 L − x)/2`. On a tie, the terms over
+  common denominators.
 
 ### 9.2 `expand`
 
@@ -336,7 +340,9 @@ than a few thousand terms is an error ("This expands to too many terms").
 
 ### 9.4 `substitute, x ⩵ value` (repeatable: `substitute, x ⩵ 1, y ⩵ 2`)
 
-Replaces each named symbol, then simplifies. `value` is any expression.
+Replaces each named symbol, all at once (so `substitute, x ⩵ y, y ⩵ x` swaps them),
+then simplifies. `value` is any expression, read like the region's own (definitions
+substituted, units after a number).
 
 ### 9.5 `solve, x`
 
@@ -352,8 +358,16 @@ Replaces each named symbol, then simplifies. `value` is any expression.
 ### 9.6 `diff, x` (and `diff, x, n`)
 
 Differentiates with respect to `x`, `n` times, with the sum, product, quotient, power
-and chain rules and the elementary functions' derivatives. In scope for everything the
-engine can represent.
+and chain rules and the elementary functions' derivatives, then simplifies. In scope
+for everything the engine can represent but a call to an undefined function of `x`,
+which leaves the input with the note "Couldn't differentiate f, a function with no
+definition". `x` is the result's main variable for display (section 11), so a
+polynomial in it is in descending powers when that leads with a plus: `2 a x + b`,
+but `2 L − x`.
+
+Keywords apply left to right, each to the result of the one before (`substitute,
+x == a + 1; expand`); `keep` and `real` apply to the whole region wherever they're
+written. With an equation, each operation applies to both sides.
 
 ### 9.7 `integrate, x` (and `integrate, x, a, b`)
 

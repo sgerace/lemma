@@ -580,6 +580,9 @@ public:
         if (best) {
             main_ = best->name;
         }
+        if (!options.main.empty()) {
+            main_ = options.main;
+        }
     }
 
     // A whole result: a unit alone keeps its number, 1 m.
@@ -703,7 +706,9 @@ private:
             return {0, 0};
         case Expr::Kind::Symbol: {
             if (base.symbol().kind == Symbol::Kind::Constant) {
-                return {1, 0};
+                // e^(k t) reads like a function, after the names: k e^(k t).
+                return f.exponent.isNumber() ? std::tuple<int, std::size_t>{1, 0}
+                                             : std::tuple<int, std::size_t>{4, firstAppearance(f.exponent)};
             }
             if (base.symbol().kind == Symbol::Kind::Unit) {
                 return {6, appearance(base.symbol().name)}; // units last: 10 kN·m
@@ -812,6 +817,14 @@ private:
         return product(c.abs(), {{expr, Expr(1)}});
     }
 
+    // No variables in it: 1 m, ln(2), √2.
+    static bool constantLike(const Expr& e)
+    {
+        std::vector<Usage> usage;
+        collectUsage(e, usage);
+        return usage.empty();
+    }
+
     static bool unitsOnly(const Expr& e)
     {
         if (e.kind() == Expr::Kind::Product) {
@@ -875,6 +888,18 @@ private:
                 }
             }
         }
+        if (main.empty() && !options_.main.empty()) {
+            main = options_.main; // diff, x: a polynomial in x
+        }
+        // Descending powers only when that leads with a plus: 2 a x + b, but 2 L − x.
+        if (!main.empty()) {
+            const auto leading = std::max_element(terms.begin(), terms.end(), [&](const ExprTerm& a, const ExprTerm& b) {
+                return degree(a.expr, main) < degree(b.expr, main);
+            });
+            if (leading->coefficient.isNegative() || !(degree(leading->expr, main) > Rational(0))) {
+                main.clear();
+            }
+        }
         std::stable_sort(terms.begin(), terms.end(), [&](const ExprTerm& a, const ExprTerm& b) {
             if (!main.empty()) {
                 const Rational da = degree(a.expr, main);
@@ -883,9 +908,9 @@ private:
                     return da > db;
                 }
             }
-            // A quantity, a number with units, goes last like a constant: x + 1 m.
-            const bool qa = unitsOnly(a.expr);
-            const bool qb = unitsOnly(b.expr);
+            // A term with no variables, like a quantity, goes last like a constant: x + 1 m.
+            const bool qa = constantLike(a.expr);
+            const bool qb = constantLike(b.expr);
             if (qa != qb) {
                 return qb;
             }

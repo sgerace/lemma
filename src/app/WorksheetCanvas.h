@@ -140,6 +140,8 @@ private:
     // Whether a math region shows its error. An unfilled placeholder isn't one while it is
     // still being typed.
     bool showsError(const lemma::Region& r) const;
+    // A symbolic evaluation's note, about what an operation couldn't do.
+    bool showsNote(const lemma::Region& r) const;
     // Lays out a text region in document coordinates, wrapped at its width.
     void layoutText(QTextLayout& layout, const lemma::Region& r) const;
 

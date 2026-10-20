@@ -43,6 +43,8 @@ std::vector<std::string> namesInOrder(const MathNode& node);
 struct ExprDisplayOptions {
     std::vector<std::string> order; // from namesInOrder()
     FormatOptions format;           // for decimals
+    // The main variable (section 11), when an operation names one: diff, x.
+    std::string main;
     // Out: the result's identifiers that are units, to show them upright.
     std::vector<int>* upright = nullptr;
 };

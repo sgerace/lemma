@@ -281,6 +281,11 @@ const lemma::MathLayout& WorksheetCanvas::mathLayout(const lemma::Region& r) con
     return it->second;
 }
 
+bool WorksheetCanvas::showsNote(const lemma::Region& r) const
+{
+    return r.result.status == lemma::RegionResult::Status::Ok && !r.result.note.empty();
+}
+
 bool WorksheetCanvas::showsError(const lemma::Region& r) const
 {
     if (r.result.status != lemma::RegionResult::Status::Error) {
@@ -355,9 +360,10 @@ QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
 
     const lemma::MathLayout& layout = mathLayout(r);
     QRectF rect(r.x, r.y - layout.ascent, std::max(layout.width, 4.0), layout.ascent + layout.descent);
-    if (showsError(r)) {
+    if (showsError(r) || showsNote(r)) {
         const QFontMetricsF efm(errorFont_);
-        rect.setWidth(std::max(rect.width(), efm.horizontalAdvance(fromUtf8(r.result.error))));
+        const std::string& text = showsError(r) ? r.result.error : r.result.note;
+        rect.setWidth(std::max(rect.width(), efm.horizontalAdvance(fromUtf8(text))));
         rect.setHeight(rect.height() + efm.height() + 4);
     }
     return rect;
@@ -615,6 +621,13 @@ void WorksheetCanvas::paintMathRegion(QPainter& painter, const lemma::Region& r,
         painter.setFont(errorFont_);
         const QFontMetricsF efm(errorFont_);
         painter.drawText(QPointF(r.x, r.y + layout.descent + 4 + efm.ascent()), fromUtf8(r.result.error));
+    }
+    if (showsNote(r)) {
+        // What an operation couldn't do: in the error's place, but not an error.
+        painter.setPen(kHintColor);
+        painter.setFont(errorFont_);
+        const QFontMetricsF efm(errorFont_);
+        painter.drawText(QPointF(r.x, r.y + layout.descent + 4 + efm.ascent()), fromUtf8(r.result.note));
     }
 
     if (onScreen && selection_.contains(r.id)) {
