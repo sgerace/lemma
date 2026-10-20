@@ -184,6 +184,8 @@ private:
     // Starts a math region at the crosshair with a command, or not at all if it does nothing.
     void startMath(const std::function<lemma::MathEditor::Change(lemma::MathEditor&)>& command);
     void copyMath(bool cut);
+    // Ctrl+Shift+C: just the region's result, as linear text to paste elsewhere.
+    void copyResult(const lemma::Region& r);
     std::function<lemma::MathEditor::Change(lemma::MathEditor&)> pasteCommand();
     void contentChanged();
     void updateScrollBars();

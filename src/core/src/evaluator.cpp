@@ -191,6 +191,10 @@ private:
 
     Quantity binary(const Node& node) const
     {
+        if (node.op == '=') {
+            throw Error("An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)", node.begin, node.end,
+                        node.origin);
+        }
         const Quantity a = eval(*node.args[0]);
         const Quantity b = eval(*node.args[1]);
         switch (node.op) {

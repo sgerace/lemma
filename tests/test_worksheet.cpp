@@ -365,3 +365,28 @@ TEST_CASE("Nice steps for ticks")
     CHECK(niceStep(0.3) == Catch::Approx(0.05));
     CHECK(niceStep(0) == 1.0);
 }
+
+TEST_CASE("A symbolic evaluation shows its expression simplified")
+{
+    CHECK(lastValue({"2*x + 3*x ->"}) == "5 x");
+    CHECK(lastValue({"w*L^4/(8*E*I) -> simplify"}) == "w L^4/(8 E I)");
+    CHECK(lastValue({"a + a == b*b ->"}) == "2 a == b^2"); // each side
+    CHECK(lastValue({"x := 2", "x*x ->"}) == "x^2");      // definitions aren't substituted yet
+
+    Worksheet ws;
+    const int unknown = ws.addRegion(0, 0, "x -> frobnicate");
+    const int later = ws.addRegion(0, 20, "x -> simplify; solve, x");
+    const int zero = ws.addRegion(0, 40, "1/(x - x) ->");
+    ws.evaluate();
+    const Region& u = *ws.region(unknown);
+    CHECK(u.result.error == "Unknown keyword: frobnicate");
+    CHECK(u.result.errorNode == u.math.children[1].id);
+    const Region& l = *ws.region(later);
+    CHECK(l.result.error == "solve isn't available yet");
+    CHECK(l.result.errorNode == l.math.children[2].children[0].id);
+    const Region& z = *ws.region(zero);
+    CHECK(z.result.error == "Division by zero");
+    CHECK(z.result.errorNode == z.math.children[0].id);
+
+    CHECK(lastError({"a == b ="}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
+}

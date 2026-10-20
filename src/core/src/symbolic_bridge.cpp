@@ -145,8 +145,13 @@ Expr lower(const MathNode& m)
         }
         case MathNode::Kind::Placeholder:
             throw Error("Fill in the placeholder", 0, 0, m.id);
+        case MathNode::Kind::Equation:
+            throw Error("An equation can only be a whole expression", 0, 0, m.id);
+        case MathNode::Kind::Keyword:
+            throw Error("A keyword goes after →", 0, 0, m.id);
         case MathNode::Kind::Definition:
         case MathNode::Kind::Evaluation:
+        case MathNode::Kind::Symbolic:
             break;
         }
         throw Error("Only a whole region can be a definition or evaluation", 0, 0, m.id);

@@ -83,6 +83,7 @@ Test UI behavior offscreen, never on the real desktop: don't inject OS-level inp
 - Write Qt Test cases that send events to the widget (`QTest::keyClicks`,
   `QTest::mouseClick` on `canvas->viewport()`).
 - For a visual check, run the `snapshot` test with `LEMMA_SNAPSHOT_DIR` set. It saves
-  `canvas.png` (via `widget->grab()`), `canvas.pdf` and `editing.png` (a region being
-  edited, with a selection) offscreen. Text may render bold offscreen because of font
+  `canvas.png` (via `widget->grab()`), `canvas.pdf`, `editing.png` (a region being
+  edited, with a selection) and `editing-symbolic.png` (a `→` region's keyword being
+  edited) offscreen. Text may render bold offscreen because of font
   fallback; the real app doesn't. Math is always in the bundled font.

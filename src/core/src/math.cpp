@@ -150,6 +150,36 @@ const MathNode* firstPlaceholder(const MathNode& root)
     return nullptr;
 }
 
+const MathNode* firstRequiredPlaceholder(const MathNode& root)
+{
+    if (root.kind == MathNode::Kind::Evaluation && root.children[1].kind == MathNode::Kind::Placeholder) {
+        return firstPlaceholder(root.children[0]);
+    }
+    if (root.kind == MathNode::Kind::Symbolic) {
+        for (const MathNode& child : root.children) {
+            if (&child != &root.children[0] && child.kind == MathNode::Kind::Placeholder) {
+                continue;
+            }
+            if (const MathNode* found = firstPlaceholder(child)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+    return firstPlaceholder(root);
+}
+
+bool isNameSlot(const MathNode& root, int id)
+{
+    int index = 0;
+    const MathNode* p = parentOf(root, id, &index);
+    if (!p) {
+        return false;
+    }
+    return ((p->kind == MathNode::Kind::Call || p->kind == MathNode::Kind::Keyword) && index == 0)
+           || (p->kind == MathNode::Kind::Symbolic && index >= 1);
+}
+
 // ---------------------------------------------------------------------------
 // From linear syntax
 
@@ -169,6 +199,8 @@ MathNode fromAst(const Node& n, std::string_view source)
         MathNode lhs = fromAst(*n.args[0], source);
         MathNode rhs = fromAst(*n.args[1], source);
         switch (n.op) {
+        case '=':
+            return MathNode(MathNode::Kind::Equation, {std::move(lhs), std::move(rhs)});
         case '/':
             return MathNode(MathNode::Kind::Fraction, {std::move(lhs), std::move(rhs)});
         case '^':
@@ -218,6 +250,24 @@ MathNode mathFromStatement(const Statement& s, std::string_view source)
     case Statement::Kind::Evaluation:
         return MathNode(MathNode::Kind::Evaluation,
                         {fromAst(*s.expr, source), s.unit ? fromAst(*s.unit, source) : MathNode()});
+    case Statement::Kind::Symbolic: {
+        MathNode symbolic(MathNode::Kind::Symbolic, {fromAst(*s.expr, source)});
+        for (const Keyword& k : s.keywords) {
+            if (k.args.empty()) {
+                symbolic.children.push_back(MathNode::identifier(k.name));
+                continue;
+            }
+            MathNode keyword(MathNode::Kind::Keyword, {MathNode::identifier(k.name)});
+            for (const NodePtr& arg : k.args) {
+                keyword.children.push_back(fromAst(*arg, source));
+            }
+            symbolic.children.push_back(std::move(keyword));
+        }
+        if (s.keywords.empty()) {
+            symbolic.children.emplace_back(); // the keyword slot, empty
+        }
+        return symbolic;
+    }
     }
     return MathNode();
 }
@@ -236,6 +286,8 @@ namespace {
 int precedence(const MathNode& n)
 {
     switch (n.kind) {
+    case MathNode::Kind::Equation:
+        return 0;
     case MathNode::Kind::Binary:
         return n.op == '+' || n.op == '-' ? 1 : 2;
     case MathNode::Kind::Fraction:
@@ -327,6 +379,25 @@ std::string linear(const MathNode& n)
         return linear(c[0]) + " := " + linear(c[1]);
     case MathNode::Kind::Evaluation:
         return c[1].kind == MathNode::Kind::Placeholder ? linear(c[0]) + " =" : linear(c[0]) + " = " + linear(c[1]);
+    case MathNode::Kind::Symbolic: {
+        // Empty keyword slots aren't written: "x^2 - 1 ->".
+        std::string keywords;
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            if (c[i].kind != MathNode::Kind::Placeholder) {
+                keywords += (keywords.empty() ? " " : "; ") + linear(c[i]);
+            }
+        }
+        return linear(c[0]) + " ->" + keywords;
+    }
+    case MathNode::Kind::Keyword: {
+        std::string s = linear(c[0]);
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            s += ", " + linear(c[i]);
+        }
+        return s;
+    }
+    case MathNode::Kind::Equation:
+        return linear(c[0]) + " == " + linear(c[1]);
     }
     return {};
 }
@@ -422,10 +493,18 @@ NodePtr lowerExpression(const MathNode& m)
         n->name = c[0].text;
         return n;
     }
+    case MathNode::Kind::Equation: {
+        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0]), lowerExpression(c[1])});
+        n->op = '=';
+        return n;
+    }
     case MathNode::Kind::Placeholder:
         throw Error("Fill in the placeholder", 0, 0, m.id);
+    case MathNode::Kind::Keyword:
+        throw Error("A keyword goes after →", 0, 0, m.id);
     case MathNode::Kind::Definition:
     case MathNode::Kind::Evaluation:
+    case MathNode::Kind::Symbolic:
         break;
     }
     throw Error("Only a whole region can be a definition or evaluation", 0, 0, m.id);
@@ -470,6 +549,26 @@ Statement lowerMath(const MathNode& root)
         if (c[1].kind != MathNode::Kind::Placeholder) {
             s.unit = lowerExpression(c[1]);
             s.unitText = toLinear(c[1]);
+        }
+        return s;
+    case MathNode::Kind::Symbolic:
+        s.kind = Statement::Kind::Symbolic;
+        s.expr = lowerExpression(c[0]);
+        for (std::size_t i = 1; i < c.size(); ++i) {
+            const MathNode& k = c[i];
+            if (k.kind == MathNode::Kind::Placeholder) {
+                continue;
+            }
+            const MathNode& name = k.kind == MathNode::Kind::Keyword ? k.children[0] : k;
+            if (name.kind != MathNode::Kind::Identifier) {
+                throw Error(name.kind == MathNode::Kind::Placeholder ? "Fill in the placeholder" : "Expected a keyword",
+                            0, 0, name.id);
+            }
+            Keyword keyword{name.text, {}};
+            for (std::size_t j = 1; k.kind == MathNode::Kind::Keyword && j < k.children.size(); ++j) {
+                keyword.args.push_back(lowerExpression(k.children[j]));
+            }
+            s.keywords.push_back(std::move(keyword));
         }
         return s;
     default:

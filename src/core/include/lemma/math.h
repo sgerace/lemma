@@ -29,6 +29,12 @@ struct MathNode {
         Call,        // children: name (an Identifier or Placeholder), then one or more arguments
         Definition,  // children: lhs, rhs. Only ever the root.
         Evaluation,  // children: expression, unit (a Placeholder when none). Only ever the root.
+        // A symbolic evaluation, expression → result (docs/symbolic-spec.md, section 6).
+        // children: expression, then one or more keyword slots, each a Placeholder, an
+        // Identifier (simplify) or a Keyword (solve, σ). Only ever the root.
+        Symbolic,
+        Keyword,     // children: name (an Identifier or Placeholder), then one or more arguments
+        Equation,    // children: lhs, rhs; drawn with a bold "=", written "=="
     };
 
     Kind kind = Kind::Placeholder;
@@ -48,7 +54,10 @@ struct MathNode {
     bool isLeaf() const { return kind == Kind::Number || kind == Kind::Identifier || kind == Kind::Placeholder; }
     // Typesets its children in slots of their own. Typing never climbs out of one.
     bool isBox() const;
-    bool isStatement() const { return kind == Kind::Definition || kind == Kind::Evaluation; }
+    bool isStatement() const
+    {
+        return kind == Kind::Definition || kind == Kind::Evaluation || kind == Kind::Symbolic;
+    }
 
     // Same structure and text, whatever the ids.
     bool sameAs(const MathNode& other) const;
@@ -69,8 +78,16 @@ bool contains(const MathNode& ancestor, int id);
 // implied parentheses of section 2): a·(b + c), but not a + b·c.
 bool needsParentheses(const MathNode& parent, int index);
 
-// The first placeholder or operator placeholder in reading order, or nullptr.
+// The first placeholder or operator placeholder in reading order, or nullptr. An empty
+// unit or keyword slot is a placeholder too.
 const MathNode* firstPlaceholder(const MathNode& root);
+// The same, but ignoring an evaluation's empty unit and a symbolic evaluation's empty
+// keyword slots, which may stay empty.
+const MathNode* firstRequiredPlaceholder(const MathNode& root);
+
+// True if node `id` is a name slot: a function's name, or a keyword's. Only a name can
+// go there, and operators can't be typed in it.
+bool isNameSlot(const MathNode& root, int id);
 
 // Builds a tree from linear syntax, as pasting does (section 11.3): "/" becomes a
 // fraction, "sqrt(x)" a radical. Throws lemma::Error, with byte offsets, if it doesn't

@@ -847,7 +847,7 @@ private slots:
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-        QCOMPARE(root.value("version").toInt(), 4); // math regions store their tree
+        QCOMPARE(root.value("version").toInt(), 5); // 4: math regions store their tree; 5: symbolic
 
         lemma::Worksheet loaded;
         QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
@@ -913,7 +913,7 @@ private slots:
         QTemporaryDir dir;
         QFile f(dir.filePath("bad.lemma"));
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(R"({"format": "lemma-worksheet", "version": 4, "regions": [{"type": "math", "x": 72, "y": 96,
+        f.write(R"({"format": "lemma-worksheet", "version": 5, "regions": [{"type": "math", "x": 72, "y": 96,
                     "math": {"kind": "add", "lhs": {"kind": "number", "text": "1"}}}]})");
         f.close();
 
@@ -921,6 +921,94 @@ private slots:
         QString error;
         QVERIFY(!DocumentIO::load(ws, f.fileName(), &error));
         QVERIFY(error.contains("damaged"));
+
+        // A keyword outside a symbolic evaluation's keyword slots, or an equation inside
+        // an expression, is damage too.
+        for (const char* math : {R"({"kind": "keyword", "name": {"kind": "identifier", "text": "solve"},
+                                     "args": [{"kind": "placeholder"}]})",
+                                 R"({"kind": "add", "lhs": {"kind": "number", "text": "1"},
+                                     "rhs": {"kind": "equation", "lhs": {"kind": "placeholder"},
+                                             "rhs": {"kind": "placeholder"}}})"}) {
+            QFile g(dir.filePath("bad2.lemma"));
+            QVERIFY(g.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            g.write(QByteArray(R"({"format": "lemma-worksheet", "version": 5, "regions": [{"type": "math", "x": 72,
+                                   "y": 96, "math": )") + math + "}]}");
+            g.close();
+            QVERIFY(!DocumentIO::load(ws, g.fileName(), &error));
+            QVERIFY(error.contains("damaged"));
+        }
+    }
+
+    void ctrlPeriodEvaluatesSymbolically()
+    {
+        click({72, 120});
+        keys("2x+3x{symbolic}");
+        const lemma::Region& r = sheet().regions()[0];
+        QCOMPARE(r.math.kind, lemma::MathNode::Kind::Symbolic);
+        QCOMPARE(linear(r), QStringLiteral("2 x + 3 x ->"));
+        QCOMPARE(value(r), QStringLiteral("5 x"));
+
+        // The keyword slot shows while editing, above the arrow, and is hidden after.
+        const auto placeholders = [&] {
+            const auto& items = canvas_->mathLayout(sheet().regions()[0]).items;
+            return std::count_if(items.begin(), items.end(), [](const lemma::MathLayoutItem& item) {
+                return item.kind == lemma::MathLayoutItem::Kind::Placeholder;
+            });
+        };
+        QCOMPARE(placeholders(), 1);
+        QTest::keyClicks(canvas_.get(), "simplify");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("2 x + 3 x -> simplify"));
+        QCOMPARE(value(sheet().regions()[0]), QStringLiteral("5 x"));
+
+        // Copy Result takes just the result.
+        QTest::keyClick(canvas_.get(), Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("5 x"));
+
+        // Backspacing the keyword away, then once more, takes the arrow away.
+        for (int i = 0; i < 9; ++i) {
+            QTest::keyClick(canvas_.get(), Qt::Key_Backspace);
+        }
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("2 x + 3 x"));
+
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        QCOMPARE(placeholders(), 0);
+    }
+
+    void ctrlEqualsTypesAnEquation()
+    {
+        click({72, 120});
+        keys("a+a{equation}b{symbolic}");
+        const lemma::Region& r = sheet().regions()[0];
+        QCOMPARE(linear(r), QStringLiteral("a + a == b ->"));
+        QCOMPARE(value(r), QStringLiteral("2 a == b"));
+        // An unknown keyword names itself.
+        QTest::keyClicks(canvas_.get(), "frobnicate");
+        QCOMPARE(sheet().regions()[0].result.error, std::string("Unknown keyword: frobnicate"));
+
+        // Copy Result works for numbers too.
+        click({72, 240});
+        keys("2m*3m=");
+        QTest::keyClick(canvas_.get(), Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("6 m^2"));
+    }
+
+    void saveAndLoadSymbolicEvaluations()
+    {
+        sheet().addRegion(72, 96, "x^2*x ->");
+        sheet().addRegion(72, 144, "a == b*c -> simplify; substitute, b == 2");
+        sheet().evaluate();
+        QTemporaryDir dir;
+        const QString path = dir.filePath("symbolic.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        QCOMPARE(loaded.regions().size(), 2u);
+        for (std::size_t i = 0; i < 2; ++i) {
+            QVERIFY(loaded.regions()[i].math.sameAs(sheet().regions()[i].math));
+        }
+        QCOMPARE(value(loaded.regions()[0]), QStringLiteral("x^3")); // recomputed, not saved
+        QCOMPARE(loaded.regions()[1].result.error, std::string("substitute isn't available yet"));
     }
 
     void saveAndLoadRoundTrip()
@@ -1024,6 +1112,16 @@ private slots:
         click({120, 696});
         QTest::keyClicks(canvas_.get(), "@f, sin");
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        // Symbolic evaluations, one with a keyword and one an equation.
+        click({480, 768});
+        keys("w*L^4{right}{space}{space}/8*E*I{symbolic}");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        click({480, 840});
+        keys("\\8{right}*x^2{right}*x+sin(pi/6){symbolic}simplify"); // keyClicks is ASCII only
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        click({480, 912});
+        keys("M{equation}s*I/c{symbolic}");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         shiftClick(regionPoint(sheet().regions()[1], 1)); // selection shows on screen, not in the PDF
 
         QVERIFY(canvas_->grab().save(dir + "/canvas.png"));
@@ -1035,6 +1133,11 @@ private slots:
         click({480, 720});
         keys("x+y{space}");
         QVERIFY(canvas_->grab().save(dir + "/editing.png"));
+
+        // A symbolic evaluation being edited: the keyword above the arrow, with a placeholder.
+        click({480, 576});
+        keys("x^2{right}+x{symbolic}solve,");
+        QVERIFY(canvas_->grab().save(dir + "/editing-symbolic.png"));
     }
 
 private:
@@ -1048,10 +1151,17 @@ private:
             {"right", Qt::Key_Right}, {"left", Qt::Key_Left}, {"space", Qt::Key_Space},
             {"return", Qt::Key_Return}, {"tab", Qt::Key_Tab},
         };
+        // Ctrl+. and Ctrl+=: a symbolic evaluation, and an equation's equals sign.
+        static const QHash<QString, Qt::Key> control = {{"symbolic", Qt::Key_Period}, {"equation", Qt::Key_Equal}};
         for (qsizetype i = 0; i < input.size(); ++i) {
             if (input[i] == '{') {
                 const qsizetype close = input.indexOf('}', i);
-                QTest::keyClick(canvas_.get(), named.value(input.mid(i + 1, close - i - 1)));
+                const QString name = input.mid(i + 1, close - i - 1);
+                if (control.contains(name)) {
+                    QTest::keyClick(canvas_.get(), control.value(name), Qt::ControlModifier);
+                } else {
+                    QTest::keyClick(canvas_.get(), named.value(name));
+                }
                 i = close;
             } else {
                 QTest::keyClicks(canvas_.get(), input.mid(i, 1));

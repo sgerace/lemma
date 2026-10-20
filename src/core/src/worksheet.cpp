@@ -2,6 +2,8 @@
 
 #include "lemma/error.h"
 #include "lemma/evaluator.h"
+#include "lemma/symbolic_bridge.h"
+#include "lemma/symbolic_ops.h"
 #include "lemma/units.h"
 
 #include <algorithm>
@@ -60,14 +62,77 @@ std::optional<MathNode> defaultUnit(const Dimension& dim)
     return MathNode(MathNode::Kind::Fraction, {std::move(top), product(std::move(denominator))});
 }
 
+// The keywords of docs/symbolic-spec.md, section 9, that come in later steps.
+bool isPlannedKeyword(const std::string& name)
+{
+    for (const char* k : {"expand", "factor", "substitute", "solve", "diff", "integrate", "keep", "real"}) {
+        if (name == k) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// expression → result (docs/symbolic-spec.md). With no keyword, or `simplify`, the
+// result is the expression simplified; an equation's sides are simplified each.
+RegionResult evaluateSymbolicRegion(const MathNode& math, const FormatOptions& format)
+{
+    RegionResult result;
+    result.kind = Statement::Kind::Symbolic;
+    try {
+        for (std::size_t i = 1; i < math.children.size(); ++i) {
+            const MathNode& k = math.children[i];
+            if (k.kind == MathNode::Kind::Placeholder) {
+                continue;
+            }
+            const MathNode& name = k.kind == MathNode::Kind::Keyword ? k.children[0] : k;
+            if (name.kind != MathNode::Kind::Identifier) {
+                throw Error("Fill in the placeholder", 0, 0, name.id);
+            }
+            if (name.text == "simplify") {
+                if (k.kind == MathNode::Kind::Keyword) {
+                    throw Error("simplify takes no arguments", 0, 0, k.children[1].id);
+                }
+            } else if (isPlannedKeyword(name.text)) {
+                throw Error(name.text + " isn't available yet", 0, 0, name.id);
+            } else {
+                throw Error("Unknown keyword: " + name.text, 0, 0, name.id);
+            }
+        }
+
+        const MathNode& expression = math.children[0];
+        ExprDisplayOptions options;
+        options.order = namesInOrder(expression);
+        options.format = format;
+        const auto shown = [&](const MathNode& side) { return mathFromExpr(simplify(exprFromMath(side)), options); };
+        if (expression.kind == MathNode::Kind::Equation) {
+            result.symbolic = MathNode(MathNode::Kind::Equation,
+                                       {shown(expression.children[0]), shown(expression.children[1])});
+        } else {
+            result.symbolic = shown(expression);
+        }
+        result.value = toLinear(*result.symbolic);
+        result.status = RegionResult::Status::Ok;
+    } catch (const Error& e) {
+        result.status = RegionResult::Status::Error;
+        result.error = e.what();
+        result.errorNode = e.node();
+    }
+    return result;
+}
+
 RegionResult evaluateMathRegion(const MathNode& math, Environment& env, const FormatOptions& format)
 {
+    if (math.kind == MathNode::Kind::Symbolic) {
+        return evaluateSymbolicRegion(math, format);
+    }
     RegionResult result;
     try {
         const Statement s = lowerMath(math);
         result.kind = s.kind;
         switch (s.kind) {
         case Statement::Kind::Empty:
+        case Statement::Kind::Symbolic: // evaluated above
             return result;
         case Statement::Kind::Expression:
             evaluate(*s.expr, env, Lookup::VariablesFirst, &result.units);

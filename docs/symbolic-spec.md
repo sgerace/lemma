@@ -161,7 +161,8 @@ What limits the risk:
 
 ### 6.1 The statement
 
-A symbolic evaluation is a new root node, `Symbolic`, with three slots:
+A symbolic evaluation is a new root node, `Symbolic`, with an expression, one or more
+keyword slots, and a computed result:
 
 ```
 expression  →  result         keyword above the arrow when given:   solve, σ
@@ -169,9 +170,12 @@ expression  →  result         keyword above the arrow when given:   solve, σ
 ```
 
 - **expression**: any expression, or an equation (6.3).
-- **keyword**: a placeholder when none is given. It is shown above the arrow while
-  the region is edited, and hidden when empty, as an evaluation's unit slot is
-  (editor spec, section 8.4).
+- **keywords**: one slot to start with, a placeholder when none is given; `;` adds
+  another. A slot holds a keyword's name (`simplify`), or a `Keyword` node: a name
+  and one or more arguments (`solve, σ`). The keywords are shown above the arrow,
+  smaller, the arrow lengthening to fit, and hidden when all are empty and the region
+  isn't being edited, as an evaluation's unit slot is (editor spec, section 8.4). Like
+  a function's name, a keyword's name takes only letters, digits and `_`.
 - **result**: computed, not a slot and not a stop, like a numeric result.
 
 ### 6.2 Keys
@@ -256,9 +260,13 @@ A definition's right-hand side may be a symbolic evaluation:
 
 ## 8. Units
 
-- A name that means a unit (as the evaluator decides, `Lookup::VariablesFirst`) becomes
-  a unit Symbol with its `Dimension`. A name with no definition and no unit meaning is
-  a plain symbol, whose dimension is unknown.
+- **Which names are units.** Several unit names are also everyday variable names
+  (`L` is a litre, and `C`, `N`, `A`, `K`, `R`, `s` and `m` are units too), so a name
+  the worksheet doesn't define is a unit only where it's used as one: in the units
+  right after a number (`2.5 m`, `4 kN·m`, `9.81 m/s²`), or in a definition's value
+  that is substituted (`P := 4 kN`). Anywhere else it's a plain symbol, whose
+  dimension is unknown: in `w L⁴/(8 E I)`, `L` is a length, not a litre. A unit
+  becomes a unit Symbol with its `Dimension`.
 - Units are kept as typed and combine like any factor: `2 m · 3 m` is `6 m²`, and
   `4 kN · 2.5 m` is `10 kN·m`.
 - Terms of the same dimension in different units are converted to the unit of the
@@ -341,12 +349,13 @@ engine can represent.
   other. It defines nothing, so it never changes numeric results.
 - **Results** go in `RegionResult` as a tree (alongside `value`, `number` and `unit`),
   are recomputed on every evaluation, and are never saved.
-- **Files.** `Symbolic` and `Equation` are new node kinds, so `.lemma` goes to version
-  5. The JSON form: `{"kind": "symbolic", "expr": …, "keyword": …}` (as a region's
-  root, or as a definition's `rhs`, 7.1) and
-  `{"kind": "equation", "lhs": …, "rhs": …}`. A keyword is a `call` node whose name is
-  the keyword (`solve`, args `[σ]`). Version 4 files are refused, as pre-release
-  policy says.
+- **Files.** `Symbolic`, `Keyword` and `Equation` are new node kinds, so `.lemma` goes
+  to version 5. The JSON forms: `{"kind": "symbolic", "expr": …, "keywords": […]}`
+  (as a region's root, or as a definition's `rhs`, 7.1), where each keyword slot is a
+  placeholder, an identifier, or `{"kind": "keyword", "name": …, "args": […]}`; and
+  `{"kind": "equation", "lhs": …, "rhs": …}`, only as a whole slot (the region, the
+  expression, or an argument). Version 4 files are refused, as pre-release policy
+  says.
 - **Cost.** Every recalculation reruns symbolic regions. Worksheet-size expressions are
   cheap, and expansion is capped (9.2), so a runaway region gives an error rather than
   a hang.

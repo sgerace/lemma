@@ -272,6 +272,9 @@ const lemma::MathLayout& WorksheetCanvas::mathLayout(const lemma::Region& r) con
             options.resultNumber = r.result.number;
             options.resultUnit = r.result.unit ? &*r.result.unit : nullptr;
         }
+        if (r.result.status == lemma::RegionResult::Status::Ok && r.result.symbolic) {
+            options.resultTree = &*r.result.symbolic;
+        }
         options.showEmptyUnit = r.id == editingId_;
         it = layouts_.emplace(r.id, lemma::layoutMath(r.math, MathFont::instance(), options)).first;
     }
@@ -1005,6 +1008,28 @@ void WorksheetCanvas::copyMath(bool cut)
     }
 }
 
+void WorksheetCanvas::copyResult(const lemma::Region& r)
+{
+    const lemma::RegionResult& result = r.result;
+    std::string text;
+    if (result.status == lemma::RegionResult::Status::Ok && result.symbolic) {
+        text = lemma::toLinear(*result.symbolic);
+    } else if (result.status == lemma::RegionResult::Status::Ok && result.kind == lemma::Statement::Kind::Evaluation) {
+        // The number with its unit: the one typed, or the one it's shown in.
+        text = result.number;
+        const lemma::MathNode& unit = r.math.children[1];
+        if (unit.kind != lemma::MathNode::Kind::Placeholder) {
+            text += " " + lemma::toLinear(unit);
+        } else if (result.unit) {
+            text += " " + lemma::toLinear(*result.unit);
+        }
+    } else {
+        emit message(tr("This region has no result to copy."));
+        return;
+    }
+    QGuiApplication::clipboard()->setText(fromUtf8(text));
+}
+
 std::function<lemma::MathEditor::Change(lemma::MathEditor&)> WorksheetCanvas::pasteCommand()
 {
     // Pasting parses linear text; it doesn't replay it as keystrokes (section 10).
@@ -1280,8 +1305,26 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
         selectAll();
         return;
     }
+    const bool control = event->modifiers() & Qt::ControlModifier;
+    if (control && (event->modifiers() & Qt::ShiftModifier) && event->key() == Qt::Key_C) {
+        // Copy Result, from the region being edited or the one selected.
+        const int id = editingId_ ? editingId_ : selection_.size() == 1 ? *selection_.begin() : 0;
+        const lemma::Region* r = worksheet_.region(id);
+        if (r && r->kind == lemma::Region::Kind::Math) {
+            copyResult(*r);
+        }
+        return;
+    }
     if (editingId_ && math_) {
         using Editor = lemma::MathEditor;
+        if (control && event->key() == Qt::Key_Period) {
+            editMath([](Editor& e) { return e.type("→"); }); // symbolic evaluation, as in Mathcad
+            return;
+        }
+        if (control && event->key() == Qt::Key_Equal) {
+            editMath([](Editor& e) { return e.type("⩵"); }); // an equation's equals sign
+            return;
+        }
         if (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) {
             copyMath(event->matches(QKeySequence::Cut));
             return;

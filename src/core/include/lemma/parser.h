@@ -12,6 +12,7 @@ namespace lemma {
 //   f(a, b) := a·b      function definition
 //   x / 2 m =           evaluation, shown in the default unit
 //   x / 2 m = kN/m      evaluation, shown in the given unit
+//   M == σ*I/c -> solve, σ    symbolic evaluation, with keywords separated by ';'
 Statement parseStatement(std::string_view source);
 
 } // namespace lemma
