@@ -27,10 +27,17 @@ ctest --test-dir build/debug --output-on-failure
 
 - `src/core` (`lemma_core`) is the engine and **must not depend on Qt**: rationals,
   dimensions/quantities, unit registry, formatting, lexer/parser to AST, evaluator,
-  worksheet. Keep it testable from Catch2 without a GUI.
+  worksheet, and the 2D math editor's model: the editor tree (`math.h`), editing
+  commands (`math_edit.h`) and box layout (`math_layout.h`, measuring text through
+  `MathFontMetrics`). Keep it testable from Catch2 without a GUI.
 - `src/app` (`lemma_app` library + thin `main.cpp`) is the Qt Widgets layer:
-  `WorksheetCanvas` (page, crosshair, editing, painting), `DocumentIO` (JSON `.lemma`
-  files), `PdfExport`, `MainWindow`.
+  `WorksheetCanvas` (page, crosshair, editing, painting), `MathRender` (the bundled
+  STIX Two Math font and painting math layouts), `DocumentIO` (JSON `.lemma` files),
+  `PdfExport`, `MainWindow`.
+- A math region is a `MathNode` tree, edited per `docs/editor-spec.md`. It is what
+  files store and what's evaluated (lowered to `lemma::Node`); linear syntax is only
+  for the clipboard and for building regions in tests (`addRegion(x, y, "x := 2 m")`).
+  Plot placeholders are still linear text, parsed by `parser.h`.
 - Document coordinates are 1/96 inch from the top-left of the first page. A region's
   `(x, y)` is the left end of its baseline. Pages are US Letter (816 × 1056).
 - Evaluation order is top to bottom, then left to right, by region position. Functions
@@ -40,23 +47,29 @@ ctest --test-dir build/debug --output-on-failure
 - `.lemma` files carry `"format": "lemma-worksheet"` and an integer `"version"`. Bump the
   version on any incompatible change. Lemma is pre-release, so don't migrate older
   versions: refuse them with a clear message. Once Lemma is released, keep loading
-  every released version.
+  every released version. Math regions store their tree (spec section 11.1).
 
 ## Planned direction
 
-The current linear text editor is a stopgap. The goal is a custom 2D math editor that
-edits the expression tree directly (Mathcad-style: the selection is a subtree, and the
-spacebar grows it), with TeX-style box layout. Don't adopt a third-party math editor
-widget. Symbolic math (e.g. SymEngine) comes later and is not part of the MVP.
+Math is edited as a tree (Mathcad-style: the selection is a subtree, and the spacebar
+grows it) with TeX-style box layout; `docs/editor-spec.md` is the agreed behavior, so
+change the spec along with the editor. Don't adopt a third-party math editor widget.
+Still to come: matrices, literal subscripts, and the other non-goals listed in the
+spec; reading layout constants from the font's `MATH` table instead of hard-coding
+them. Symbolic math (e.g. SymEngine) comes later and is not part of the MVP.
 
 ## Conventions
 
 - Match the existing style: 4-space indent, `camelCase` methods, `trailing_` members,
   `k`-prefixed constants, brief comments that explain *why*.
 - Engine changes need Catch2 tests in `tests/`. Canvas or interaction changes need a
-  case in `tests/gui/test_canvas.cpp`.
+  case in `tests/gui/test_canvas.cpp`. Editing behavior is tested in
+  `tests/test_math.cpp` in the spec's notation (`a + b·c|`); keep the randomized test
+  there passing.
 - Source strings are UTF-8 (`std::string` in core). The app converts with
-  `QString::fromStdString` / `toStdString`. Error positions are byte offsets.
+  `QString::fromStdString` / `toStdString`. Errors in math regions name a node
+  (`Error::node()`, `RegionResult::errorNode`); errors in parsed text (plot fields,
+  pasted text) are byte offsets.
 
 ## GUI testing
 
@@ -66,5 +79,6 @@ Test UI behavior offscreen, never on the real desktop: don't inject OS-level inp
 - Write Qt Test cases that send events to the widget (`QTest::keyClicks`,
   `QTest::mouseClick` on `canvas->viewport()`).
 - For a visual check, run the `snapshot` test with `LEMMA_SNAPSHOT_DIR` set. It saves
-  `canvas.png` (via `widget->grab()`) and `canvas.pdf` offscreen. Text may render bold
-  offscreen because of font fallback; the real app doesn't.
+  `canvas.png` (via `widget->grab()`), `canvas.pdf` and `editing.png` (a region being
+  edited, with a selection) offscreen. Text may render bold offscreen because of font
+  fallback; the real app doesn't. Math is always in the bundled font.

@@ -12,8 +12,7 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
 ```
 
 > **Status:** early prototype. The calculation engine (units, definitions, functions)
-> works and is tested; equations are typed in a linear syntax for now, ahead of a
-> proper 2D math editor.
+> works and is tested, and math is edited and typeset in 2D, Mathcad style.
 
 ## Features
 
@@ -22,6 +21,10 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
   mismatches like `1 m + 1 kg` are reported as errors.
 - **Mathcad evaluation order:** the worksheet calculates top to bottom, then left to
   right, so a name can only be used below where it's defined. Drag a region to move it.
+- **2D math:** fractions stack, exponents rise and radicals grow as you type, set in
+  STIX Two Math. You edit the expression itself, not a line of text: the selection is
+  always a whole subexpression, and Space grows it (see [the editing
+  spec](docs/editor-spec.md)).
 - **Live results:** results update as you type.
 - **Text regions:** type `"` at the crosshair for a heading or note. Enter starts a new
   line, Escape finishes, and dragging the right edge sets where the text wraps. Text is
@@ -30,20 +33,29 @@ I := b h³ / 12      I = 4.167×10⁶ mm⁴
   expressions such as `f, sin(x) / 2`). Tab steps through the x variable and the axis
   limits; empty y limits fit the data. Limits can carry units, e.g. `0 m` to `200 mm`.
   Drag the corner to resize.
-- **Portable files:** `.lemma` files are versioned JSON, so they're human-readable and
-  diff well in version control.
+- **Portable files:** `.lemma` files are versioned JSON, storing each expression as a
+  tree, so they're human-readable and diff well in version control.
 - **PDF export** of the page layout, US Letter.
 
-## Syntax
+## Typing math
 
-| Input | Meaning |
+Type as you would write it on one line; the editor builds the 2D expression.
+
+| Keys | Result |
 |---|---|
-| `L := 2 m` | Define a variable. Typing `:` inserts `:=`. |
-| `L =` | Show a result in its default unit |
-| `L = ft` | Show a result in a chosen unit |
-| `f(x) := x^2` | Define a function |
-| `10 N/m` | A space multiplies, like `*` (`·` and `×` work too) |
-| `M (h/2)` | Parentheses after a value multiply |
+| `L:2m` | `L := 2 m`. `:` defines, and a letter after a number multiplies, for units |
+| `L=` | Shows the result; type a unit after it, like `ft`, to choose the unit |
+| `f(x):x^2` | Defines a function |
+| `a/b` `x^2` `\x` | Fraction, exponent, square root |
+| → | Leave a denominator or exponent: typing stays in it until you do |
+| Space | Select more. The next operator applies to everything underlined: `a+b` Space Space `*c` gives (a + b)·c |
+| Shift+Space | Select less |
+| Tab | Go to the next placeholder ■ |
+| Backspace | After an operator you just typed, removes it: `a+` Backspace gives `a` |
+| Ctrl+C, Ctrl+V | Copy and paste as linear text, e.g. `w L^4/(8 E I)` |
+
+Letters in a row are one name (`LF`); multiply names with `*`. A name's part after `_`
+is shown as a subscript (`δ_allow`).
 
 **Built-in functions:** `sqrt`, `abs`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
 `ln`, `log` (base 10), `exp`, `min`, `max`.

@@ -1,7 +1,9 @@
 # 2D math editor: editing model
 
-Status: **agreed in review** (issue #7); see section 12. Nothing here is implemented
-yet.
+Status: **agreed in review** (issue #7; see section 12) and implemented:
+`src/core/include/lemma/math.h` (the tree), `math_edit.h` (the commands) and
+`math_layout.h` (box layout). Section 13 records where the implementation settles
+things this spec left open. Change this document along with the editor.
 
 This spec defines how a math region is edited once it is a 2D, Mathcad-style
 expression instead of a line of text: what the editor's tree holds, where the caret
@@ -451,3 +453,33 @@ Settled in review:
    (`a·b|` then `Space + c` gives `a·(b + c)`). It is the only keyboard way to wrap the
    last operand alone, and it keeps Space consistent between leaves and boxes. An
    underline always means the next operator wraps exactly what is underlined.
+
+## 13. Implementation notes
+
+Where the spec was silent, the implementation settles it like this. Each is tested in
+`tests/test_math.cpp` or `tests/gui/test_canvas.cpp`.
+
+- **Exponents.** After `2e` (shown `2 e`), a digit, `+` or `-` continues the number's
+  exponent: `2e-3`. Until a digit follows the sign, the number is incomplete and is
+  reported as one. Backspace back to `2e` gives `2 e` again.
+- **Juxtaposition has no operator to leave behind.** Emptying either side of a
+  juxtaposition removes it: `10 N` Backspace gives `10`, not `10 □`.
+- **Next to a box.** Backspace right after a box, or Delete right before one, selects
+  it, as rule 5 does from inside. Backspace right after a minus sign, or Delete right
+  before one, removes the sign.
+- **`(` at the start of a leaf** multiplies a new group in front: `|x` gives `(|■)·x`.
+- **Function names.** A name never splits and never takes an operator: `f|(x)` then
+  `+` does nothing. Before the name is before the whole call: `|f(x)` then `-` gives
+  `−f(x)`.
+- **Dragging** selects only in the region being edited. Dragging any other region moves
+  it, as before.
+- **Incomplete input.** While a region is being edited, an unfilled placeholder isn't
+  reported as an error; it is once editing ends.
+- **Typesetting.** Names that meant units are upright and other names italic (math
+  italic code points), as are built-in function names. A result with no unit given is
+  shown in its default unit, typeset as a tree (`J`, `kg·m/s²`). A name's part after
+  `_` is a subscript (`δ_allow`). Fractions keep their contents at full size.
+- **Starting a region.** Typing at the crosshair starts a region only if the key does
+  something there: `)` or Space alone leaves no region behind. Paste at the crosshair
+  starts a region with the pasted math.
+- **Paste errors** are shown in the status bar.
