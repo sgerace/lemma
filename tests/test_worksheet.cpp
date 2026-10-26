@@ -666,6 +666,13 @@ TEST_CASE("A symbolic definition defines its name as the result (7.1)")
     // Parameters are never substituted.
     CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(2) ="}) == "12");
     CHECK(lastValue({"x := 5", "f(x) := x^3 -> diff, x", "f(t) ->"}) == "3 t^2");
+    // A lone solution: the name is its right-hand side, shown as solved.
+    const Worksheet peak = sheet({"t_peak := v*sin(θ) - g*t == 0 -> solve, t", "t_peak ->"});
+    CHECK(peak.regions()[0].result.value == "t == v sin(θ)/g");
+    CHECK(last(peak).value == "v sin(θ)/g");
+    CHECK(lastValue({"v := 20 m/s", "g := 9.8 m/s^2", "t_peak := v - g*t == 0 -> solve, t", "t_peak ="})
+          == "2.041 s");
+    CHECK(lastValue({"r(a) := a*x - 6 == 0 -> solve, x", "r(3) ="}) == "2");
     // Full precision, not the 3 places shown.
     CHECK(lastValue({"k := 1/3 -> simplify", "k*3 ="}) == "1");
 
@@ -674,6 +681,8 @@ TEST_CASE("A symbolic definition defines its name as the result (7.1)")
     CHECK(open.regions()[0].result.status == RegionResult::Status::Ok);
     CHECK(open.regions()[0].result.note == "Couldn't integrate this");
     CHECK(last(open).error == "F has no closed form");
-    CHECK(lastError({"s := x^2 - 1 -> solve, x"}) == "A definition needs one result, not an equation or solutions");
+    CHECK(lastError({"s := x^2 - 1 -> solve, x"}) == "solve found 2 solutions; a definition needs one");
+    CHECK(lastError({"s := x^2 == 1 -> simplify"}) == "A definition needs one result, not an equation");
+    CHECK(lastError({"s := x == 1"}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
     CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
 }

@@ -257,8 +257,11 @@ A definition's right-hand side may be a symbolic evaluation:
 - **Beyond scope.** When the operation couldn't finish (an integral left unevaluated),
   the definition still shows the result with its note, and using the name numerically
   is an error at the use: "θ has no closed form". Numeric integration comes later.
-- **One result.** A definition takes one expression: `solve`'s solutions, or an
-  equation, are an error on the definition.
+- **One result.** A definition takes one expression. After `solve`, a lone solution
+  `x = e` defines the name as `e`, as Mathcad does (`t_peak := v sin θ − g t ⩵ 0 →
+  solve, t` is `v sin θ/g`); the result is still shown as `t = v sin θ/g`. Several
+  solutions are an error on the definition ("solve found 2 solutions; a definition
+  needs one"), until matrices (#27) allow a vector of them, as does an equation.
 - **Precision.** The name is defined as the result to full precision, not to the
   worksheet's three places shown: `k := 1/3 → simplify` then `k·3 =` is `1`. The
   result's units are known, so later regions use them as units whatever is free.

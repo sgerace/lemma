@@ -94,10 +94,12 @@ struct Operation {
 // except those `keep` lists. The operation keywords apply left to right; with none,
 // the expression is simplified. An equation's sides are each worked on.
 // With `parameters`, a function's, which stay names (7.1); `value` gets the single
-// result, for a symbolic definition, and `order` the names' display order.
+// result, for a symbolic definition (a lone solution's right-hand side, after solve),
+// `solutionCount` how many solutions solve found, and `order` the names' display order.
 RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const SymbolicDefinition> definitions,
                                     const FormatOptions& format, const std::vector<std::string>& parameters = {},
-                                    std::optional<Expr>* value = nullptr, std::vector<std::string>* orderOut = nullptr)
+                                    std::optional<Expr>* value = nullptr, std::size_t* solutionCount = nullptr,
+                                    std::vector<std::string>* orderOut = nullptr)
 {
     RegionResult result;
     result.kind = Statement::Kind::Symbolic;
@@ -306,8 +308,12 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
         }
         result.value = toLinear(*result.symbolic);
         result.status = RegionResult::Status::Ok;
-        if (value && solvedFor.empty() && !equation && result.note.empty()) {
+        const bool single = solvedFor.empty() ? !equation : sides.size() == 1;
+        if (value && single && result.note.empty()) {
             *value = combineUnits(sides[0], order);
+        }
+        if (solutionCount && !solvedFor.empty()) {
+            *solutionCount = sides.size();
         }
         if (orderOut) {
             *orderOut = order;
@@ -363,8 +369,9 @@ void evaluateSymbolicDefinition(Region& r, Environment& env, std::vector<Symboli
         return;
     }
     std::optional<Expr> value;
+    std::size_t solutions = 0;
     std::vector<std::string> order;
-    r.result = evaluateSymbolicRegion(symbolic, definitions, format, d->params, &value, &order);
+    r.result = evaluateSymbolicRegion(symbolic, definitions, format, d->params, &value, &solutions, &order);
     r.result.kind = d->function ? Statement::Kind::FunctionDefinition : Statement::Kind::Definition;
     if (r.result.status != RegionResult::Status::Ok) {
         return; // used later, the name isn't defined
@@ -375,7 +382,9 @@ void evaluateSymbolicDefinition(Region& r, Environment& env, std::vector<Symboli
     }
     if (!value) {
         r.result.status = RegionResult::Status::Error;
-        r.result.error = "A definition needs one result, not an equation or solutions";
+        r.result.error = solutions > 1
+                             ? "solve found " + std::to_string(solutions) + " solutions; a definition needs one"
+                             : "A definition needs one result, not an equation";
         r.result.errorNode = symbolic.id;
         r.result.symbolic.reset();
         r.result.value.clear();

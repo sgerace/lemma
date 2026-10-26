@@ -169,7 +169,7 @@ public:
             s.kind = Statement::Kind::Definition;
             s.name = next().text;
             s.assignPos = next().begin;
-            s.expr = expression();
+            s.expr = relation(); // an equation, for → solve
             symbolicDefinition(s);
         } else if (isFunctionDefinition()) {
             s.kind = Statement::Kind::FunctionDefinition;
@@ -182,7 +182,7 @@ public:
             }
             expect(Token::Kind::RParen, "Expected ')'");
             s.assignPos = expect(Token::Kind::Assign, "Expected ':='").begin;
-            s.expr = expression();
+            s.expr = relation();
             symbolicDefinition(s);
         } else {
             s.kind = Statement::Kind::Expression;
