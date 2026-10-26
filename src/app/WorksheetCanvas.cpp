@@ -193,12 +193,14 @@ WorksheetCanvas::WorksheetCanvas(QWidget* parent)
     : QAbstractScrollArea(parent)
 {
     font_.setFamilies({"Cambria", "STIX Two Text", "Times New Roman"});
-    font_.setPointSizeF(12);
+    // Sized in pixels, which are document units, as the math font is. A point size would
+    // follow the device's dpi: 72 for a Mac screen, 96 for the PDF.
+    font_.setPixelSize(16); // 12 pt
     errorFont_ = font_;
-    errorFont_.setPointSizeF(9);
+    errorFont_.setPixelSize(12); // 9 pt
     errorFont_.setItalic(true);
     textFont_.setFamilies({"Segoe UI", "Helvetica Neue", "Arial"});
-    textFont_.setPointSizeF(11);
+    textFont_.setPixelSize(15); // 11.25 pt; pixel sizes are whole
 
     viewport()->setMouseTracking(true); // to pick the cursor on hover
     setFocusPolicy(Qt::StrongFocus);
@@ -308,12 +310,12 @@ QPointF WorksheetCanvas::mathCaretPosition(const lemma::Region& r, const lemma::
     return {r.x + g.x, r.y + (g.top + g.bottom) / 2};
 }
 
-void WorksheetCanvas::layoutText(QTextLayout& layout, const lemma::Region& r) const
+void WorksheetCanvas::layoutText(QTextLayout& layout, const lemma::Region& r, const QPaintDevice* device) const
 {
     QString text = fromUtf8(r.source);
     text.replace(QLatin1Char('\n'), QChar::LineSeparator); // same length, so caret indices still match
     layout.setText(text);
-    layout.setFont(textFont_);
+    layout.setFont(device ? QFont(textFont_, device) : textFont_);
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     layout.setTextOption(option);
@@ -332,11 +334,11 @@ void WorksheetCanvas::layoutText(QTextLayout& layout, const lemma::Region& r) co
     layout.endLayout();
 }
 
-QRectF WorksheetCanvas::regionRect(const lemma::Region& r) const
+QRectF WorksheetCanvas::regionRect(const lemma::Region& r, const QPaintDevice* device) const
 {
     if (r.kind == lemma::Region::Kind::Text) {
         QTextLayout layout;
-        layoutText(layout, r);
+        layoutText(layout, r, device);
         const QTextLine first = layout.lineAt(0);
         const QTextLine last = layout.lineAt(layout.lineCount() - 1);
         double width = r.id == editingId_ ? r.width : 4.0;
