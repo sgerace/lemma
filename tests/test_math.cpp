@@ -635,7 +635,8 @@ TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
 {
     for (const char* source : {"x^2 - 1 ->", "x^2 - 5*x + 6 -> factor", "M == σ*I/c -> solve, σ",
                                "θ(x) := y(x) -> diff, x", "M_max := w*L^2/8 -> keep, w",
-                               "y -> keep, P, L; diff, x", "f(x) -> substitute, x == 2"}) {
+                               "y -> keep, P, L; diff, x", "f(x) -> substitute, x == 2",
+                               "t_peak := v_y(t) == 0 -> solve, t"}) {
         CHECK(toLinear(mathFromLinear(source)) == source);
     }
     CHECK(toLinear(mathFromLinear("a ⩵ b → simplify")) == "a == b -> simplify");
