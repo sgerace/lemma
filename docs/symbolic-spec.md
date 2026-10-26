@@ -388,7 +388,11 @@ product is solved on its own (a denominator never is zero); a polynomial in x is
 factored, or solved by degree (linear, the quadratic formula); otherwise the one term
 with x in it is moved across and undone, a function or power at a time (an even power
 gives both roots, `|g| = v` gives `g = ±v`, `e^g = v` gives `g = ln v`, `sin g = v`
-the principal `g = asin v`).
+the principal `g = asin v`). Sines and cosines of one argument g, with x nowhere else, are rewritten so x
+is in one function: `a sin g + b cos g = 0` is `tan g = −b/a`, and one of degree two
+goes by the double-angle identities to `p + q sin 2g + r cos 2g`, solved when it's
+one of sin, cos or tan of 2g (`cos² θ − sin² θ = 0` gives `θ = π/4`). A constant with
+both of them, like `sin x + cos x = 1`, is beyond it.
 
 Each solution is put back: one that leaves a value that can't be zero (a nonzero
 number, something positive or negative, or a value with no variables away from zero)

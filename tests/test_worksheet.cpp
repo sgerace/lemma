@@ -597,6 +597,12 @@ TEST_CASE("solve finds every solution (9.5)")
     CHECK(lastValue({"x := 5", "x^2 == 9 -> solve, x"}) == "x == ±3"); // the variable stays a name
     CHECK(lastValue({"P := 4 kN", "P == k*d -> solve, d"}) == "d == 4 kN/k");
     CHECK(lastValue({"x^2 == 4*a -> solve, x; substitute, a == 4"}) == "x == ±4"); // then on each
+    // Sines and cosines of one argument, rewritten so x is in one function.
+    CHECK(lastValue({"cos(x)^2 - sin(x)^2 -> solve, x"}) == "x == π/4");
+    CHECK(lastValue({"sin(x) - cos(x) -> solve, x"}) == "x == π/4");
+    CHECK(lastValue({"sin(x)*cos(x) == 1/4 -> solve, x"}) == "x == π/12");
+    CHECK(lastValue({"a*sin(k*t) == b*cos(k*t) -> solve, t"}) == "t == atan(b/a)/k");
+    CHECK(lastValue({"2*v^2*sin(θ)*cos(θ)/g -> diff, θ; solve, θ"}) == "θ == π/4"); // the best launch angle
 
     const auto note = [](std::initializer_list<std::string> lines) {
         const Worksheet ws = sheet(lines);
@@ -607,6 +613,8 @@ TEST_CASE("solve finds every solution (9.5)")
     CHECK(note({"x^2 + 1 -> solve, x"}) == "There's no real solution for x");
     CHECK(note({"x + 1 == x -> solve, x"}) == "There's no solution for x");
     CHECK(note({"x == x -> solve, x"}) == "Any x is a solution");
+    CHECK(note({"sin(x) + cos(x) == 1 -> solve, x"}) == "Couldn't solve this for x");
+    CHECK(note({"2*sin(x)*cos(x) == 2 -> solve, x"}) == "There's no real solution for x");
 }
 
 TEST_CASE("integrate integrates (9.7)")
