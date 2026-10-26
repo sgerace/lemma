@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace lemma {
 
@@ -199,7 +200,10 @@ public:
             if (auto polynomial = polynomialZeros(f, depth)) {
                 return polynomial;
             }
-            return isolate(f, depth);
+            if (auto isolated = isolate(f, depth)) {
+                return isolated;
+            }
+            return trigZeros(f, depth);
         }
         return invert(f, Expr(0), depth + 1);
     }
@@ -296,6 +300,105 @@ private:
             return std::nullopt;
         }
         return invert(with[0], -Expr::sum(without), depth + 1);
+    }
+
+    // A sum of sines and cosines of one argument g, with x nowhere else, rewritten so x
+    // is in one function: a sin g + b cos g is tan g = −b/a, and one of degree two goes
+    // to double angles, p + q sin 2g + r cos 2g, then one of sin, cos or tan of 2g.
+    std::optional<std::vector<Expr>> trigZeros(const Expr& f, int depth) const
+    {
+        const Expr s = Expr::variable("sin ·", false);
+        const Expr c = Expr::variable("cos ·", false);
+        std::optional<Expr> g;
+        bool one = true; // a single argument
+        const std::function<Expr(const Expr&)> swap = [&](const Expr& e) -> Expr {
+            switch (e.kind()) {
+            case Expr::Kind::Sum: {
+                std::vector<Expr> parts{Expr(e.constant())};
+                for (const ExprTerm& t : e.terms()) {
+                    parts.push_back(Expr(t.coefficient) * swap(t.expr));
+                }
+                return Expr::sum(parts);
+            }
+            case Expr::Kind::Product: {
+                std::vector<Expr> parts{Expr(e.coefficient())};
+                for (const ExprFactor& p : e.factors()) {
+                    parts.push_back(Expr::pow(swap(p.base), swap(p.exponent)));
+                }
+                return Expr::product(parts);
+            }
+            case Expr::Kind::Function:
+                if ((e.function() == MathFunction::Sin || e.function() == MathFunction::Cos)
+                    && dependsOn(e.argument(), name_)) {
+                    one = one && (!g || *g == e.argument());
+                    g = g.value_or(e.argument());
+                    return e.function() == MathFunction::Sin ? s : c;
+                }
+                return e;
+            default:
+                return e;
+            }
+        };
+        Expr p = swap(f);
+        if (!g || !one || dependsOn(p, name_)) {
+            return std::nullopt;
+        }
+        std::vector<std::vector<Expr>> k(3, std::vector<Expr>(3)); // k[i][j]: of sin^i cos^j, degree two at most
+        try {
+            for (const Expr& term : termsOf(expand(p, 500))) {
+                std::size_t i = 0;
+                std::size_t j = 0;
+                Expr rest = term;
+                for (const ExprFactor& factor : factorsOf(term)) {
+                    if (factor.base == s || factor.base == c) {
+                        if (!isWhole(factor.exponent) || factor.exponent.number().exact().num() > 2) {
+                            return std::nullopt;
+                        }
+                        (factor.base == s ? i : j) = static_cast<std::size_t>(factor.exponent.number().exact().num());
+                        rest = rest / Expr::pow(factor.base, factor.exponent);
+                    }
+                }
+                if (i + j > 2 || dependsOn(rest, s.symbol().name) || dependsOn(rest, c.symbol().name)) {
+                    return std::nullopt;
+                }
+                k[i][j] = k[i][j] + rest;
+            }
+        } catch (const Error&) {
+            return std::nullopt;
+        }
+        const auto at = [&](std::size_t i, std::size_t j) { return simplify(k[i][j]); };
+        const bool first = !(at(1, 0) == Expr(0)) || !(at(0, 1) == Expr(0));
+        const bool second = !(at(2, 0) == Expr(0)) || !(at(1, 1) == Expr(0)) || !(at(0, 2) == Expr(0));
+        Expr h = *g;
+        Expr q; // of sin h
+        Expr r; // of cos h
+        if (first && !second && at(0, 0) == Expr(0)) {
+            p = Expr(0);
+            q = at(1, 0);
+            r = at(0, 1);
+        } else if (second && !first) {
+            // sin² = (1 − cos 2g)/2, cos² = (1 + cos 2g)/2, sin cos = (sin 2g)/2
+            h = Expr(2) * *g;
+            p = simplify(at(0, 0) + (at(2, 0) + at(0, 2)) * kHalf);
+            q = simplify(at(1, 1) * kHalf);
+            r = simplify((at(0, 2) - at(2, 0)) * kHalf);
+        } else {
+            return std::nullopt;
+        }
+        if (q == Expr(0) && r == Expr(0)) {
+            return zeros(p, depth + 1);
+        }
+        if (r == Expr(0)) {
+            return invert(Expr::apply(MathFunction::Sin, h), -p / q, depth + 1);
+        }
+        if (q == Expr(0)) {
+            return invert(Expr::apply(MathFunction::Cos, h), -p / r, depth + 1);
+        }
+        if (p == Expr(0)) {
+            // Where cos h is zero, sin h isn't, so dividing by it loses nothing.
+            return invert(Expr::apply(MathFunction::Tan, h), -r / q, depth + 1);
+        }
+        return std::nullopt;
     }
 
     // The solutions of u = value, undoing what's done to x in u. A value with no real

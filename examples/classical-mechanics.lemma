@@ -1,0 +1,1162 @@
+{
+    "format": "lemma-worksheet",
+    "regions": [
+        {
+            "text": "Classical Mechanics",
+            "type": "text",
+            "width": 300,
+            "x": 72,
+            "y": 96
+        },
+        {
+            "text": "A few classic results from a first mechanics course, derived with → and then put to numbers and plots. Regions calculate top to bottom, then left to right, so a name can be used anywhere below its definition. Every symbol is a positive real.",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 132
+        },
+        {
+            "text": "Projectile Motion",
+            "type": "text",
+            "width": 300,
+            "x": 72,
+            "y": 228
+        },
+        {
+            "text": "Launch at speed v and angle θ from the ground, with gravity g. Lemma knows g as standard gravity: it stays a letter in → results, and is 9.807 m/s² in numbers.",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 264
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "t"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "x"
+                    }
+                },
+                "rhs": {
+                    "kind": "multiply",
+                    "lhs": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "identifier",
+                            "text": "v"
+                        },
+                        "rhs": {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "θ"
+                                }
+                            ],
+                            "kind": "call",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "cos"
+                            }
+                        },
+                        "style": "dot"
+                    },
+                    "rhs": {
+                        "kind": "identifier",
+                        "text": "t"
+                    },
+                    "style": "dot"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 336
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "t"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "y"
+                    }
+                },
+                "rhs": {
+                    "kind": "subtract",
+                    "lhs": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "identifier",
+                                "text": "v"
+                            },
+                            "rhs": {
+                                "args": [
+                                    {
+                                        "kind": "identifier",
+                                        "text": "θ"
+                                    }
+                                ],
+                                "kind": "call",
+                                "name": {
+                                    "kind": "identifier",
+                                    "text": "sin"
+                                }
+                            },
+                            "style": "dot"
+                        },
+                        "rhs": {
+                            "kind": "identifier",
+                            "text": "t"
+                        },
+                        "style": "dot"
+                    },
+                    "rhs": {
+                        "den": {
+                            "kind": "number",
+                            "text": "2"
+                        },
+                        "kind": "fraction",
+                        "num": {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "identifier",
+                                "text": "g"
+                            },
+                            "rhs": {
+                                "base": {
+                                    "kind": "identifier",
+                                    "text": "t"
+                                },
+                                "exp": {
+                                    "kind": "number",
+                                    "text": "2"
+                                },
+                                "kind": "power"
+                            },
+                            "style": "dot"
+                        }
+                    }
+                }
+            },
+            "type": "math",
+            "x": 384,
+            "y": 336
+        },
+        {
+            "text": "It lands when y(t) = 0 again. solve finds both roots, the launch at t = 0 and the landing. Dividing by t leaves only the landing, the time of flight T:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 408
+        },
+        {
+            "math": {
+                "expr": {
+                    "kind": "equation",
+                    "lhs": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "rhs": {
+                        "kind": "number",
+                        "text": "0"
+                    }
+                },
+                "keywords": [
+                    {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t"
+                            }
+                        ],
+                        "kind": "keyword",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "solve"
+                        }
+                    }
+                ],
+                "kind": "symbolic"
+            },
+            "type": "math",
+            "x": 96,
+            "y": 480
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "T"
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "equation",
+                        "lhs": {
+                            "den": {
+                                "kind": "identifier",
+                                "text": "t"
+                            },
+                            "kind": "fraction",
+                            "num": {
+                                "args": [
+                                    {
+                                        "kind": "identifier",
+                                        "text": "t"
+                                    }
+                                ],
+                                "kind": "call",
+                                "name": {
+                                    "kind": "identifier",
+                                    "text": "y"
+                                }
+                            }
+                        },
+                        "rhs": {
+                            "kind": "number",
+                            "text": "0"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "t"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "solve"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 384,
+            "y": 480
+        },
+        {
+            "text": "The vertical velocity is the derivative of y, and the peak is where it's zero. Is that halfway through the flight?",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 552
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "t"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "v_y"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "t"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "diff"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 624
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "t_peak"
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "equation",
+                        "lhs": {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "t"
+                                }
+                            ],
+                            "kind": "call",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "v_y"
+                            }
+                        },
+                        "rhs": {
+                            "kind": "number",
+                            "text": "0"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "t"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "solve"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 384,
+            "y": 624
+        },
+        {
+            "math": {
+                "expr": {
+                    "den": {
+                        "kind": "identifier",
+                        "text": "t_peak"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "identifier",
+                        "text": "T"
+                    }
+                },
+                "keywords": [
+                    {
+                        "kind": "placeholder"
+                    }
+                ],
+                "kind": "symbolic"
+            },
+            "type": "math",
+            "x": 96,
+            "y": 684
+        },
+        {
+            "text": "The range is how far it has gone by the time it lands, and the peak height is y at the top:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 756
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "R"
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "T"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 804
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "H"
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t_peak"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 384,
+            "y": 804
+        },
+        {
+            "text": "The best launch angle is where dR/dθ = 0. solve turns the sines and cosines into double angles itself, so R needs no rewriting first:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 876
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "best"
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "identifier",
+                        "text": "R"
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "θ"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "diff"
+                            }
+                        },
+                        {
+                            "args": [
+                                {
+                                    "kind": "identifier",
+                                    "text": "θ"
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "solve"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 948
+        },
+        {
+            "math": {
+                "expr": {
+                    "kind": "identifier",
+                    "text": "R"
+                },
+                "keywords": [
+                    {
+                        "args": [
+                            {
+                                "kind": "equation",
+                                "lhs": {
+                                    "kind": "identifier",
+                                    "text": "θ"
+                                },
+                                "rhs": {
+                                    "kind": "identifier",
+                                    "text": "best"
+                                }
+                            }
+                        ],
+                        "kind": "keyword",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "substitute"
+                        }
+                    }
+                ],
+                "kind": "symbolic"
+            },
+            "type": "math",
+            "x": 384,
+            "y": 948
+        },
+        {
+            "text": "Putting t = X/(v cos θ) into y gives the path itself, the height at a distance X downrange:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 1152
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "X"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "path"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "args": [
+                                {
+                                    "kind": "equation",
+                                    "lhs": {
+                                        "kind": "identifier",
+                                        "text": "t"
+                                    },
+                                    "rhs": {
+                                        "den": {
+                                            "kind": "multiply",
+                                            "lhs": {
+                                                "kind": "identifier",
+                                                "text": "v"
+                                            },
+                                            "rhs": {
+                                                "args": [
+                                                    {
+                                                        "kind": "identifier",
+                                                        "text": "θ"
+                                                    }
+                                                ],
+                                                "kind": "call",
+                                                "name": {
+                                                    "kind": "identifier",
+                                                    "text": "cos"
+                                                }
+                                            },
+                                            "style": "dot"
+                                        },
+                                        "kind": "fraction",
+                                        "num": {
+                                            "kind": "identifier",
+                                            "text": "X"
+                                        }
+                                    }
+                                }
+                            ],
+                            "kind": "keyword",
+                            "name": {
+                                "kind": "identifier",
+                                "text": "substitute"
+                            }
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1212
+        },
+        {
+            "text": "With Numbers",
+            "type": "text",
+            "width": 300,
+            "x": 72,
+            "y": 1284
+        },
+        {
+            "text": "The results above have v and θ in them, so they have no number yet. As functions of v and θ, they take numbers when called:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 1320
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "θ"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "range"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "identifier",
+                        "text": "R"
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1392
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "θ"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "peak"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "kind": "identifier",
+                        "text": "H"
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 432,
+            "y": 1392
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "t"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "v"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "θ"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "height"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "t"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "y"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1452
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "X"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "v"
+                        },
+                        {
+                            "kind": "identifier",
+                            "text": "θ"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "trajectory"
+                    }
+                },
+                "rhs": {
+                    "expr": {
+                        "args": [
+                            {
+                                "kind": "identifier",
+                                "text": "X"
+                            }
+                        ],
+                        "kind": "call",
+                        "name": {
+                            "kind": "identifier",
+                            "text": "path"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
+                        }
+                    ],
+                    "kind": "symbolic"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1512
+        },
+        {
+            "text": "A launch at 20 m/s:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 1572
+        },
+        {
+            "math": {
+                "kind": "definition",
+                "lhs": {
+                    "kind": "identifier",
+                    "text": "v_0"
+                },
+                "rhs": {
+                    "den": {
+                        "kind": "identifier",
+                        "text": "s"
+                    },
+                    "kind": "fraction",
+                    "num": {
+                        "kind": "multiply",
+                        "lhs": {
+                            "kind": "number",
+                            "text": "20"
+                        },
+                        "rhs": {
+                            "kind": "identifier",
+                            "text": "m"
+                        },
+                        "style": "juxtaposed"
+                    }
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1620
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "30"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "range"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1668
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "45"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "range"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 312,
+            "y": 1668
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "60"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "range"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 528,
+            "y": 1668
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "30"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "peak"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 96,
+            "y": 1716
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "45"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "peak"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 312,
+            "y": 1716
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "v_0"
+                        },
+                        {
+                            "kind": "multiply",
+                            "lhs": {
+                                "kind": "number",
+                                "text": "60"
+                            },
+                            "rhs": {
+                                "kind": "identifier",
+                                "text": "deg"
+                            },
+                            "style": "juxtaposed"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "peak"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "identifier",
+                    "text": "m"
+                }
+            },
+            "type": "math",
+            "x": 528,
+            "y": 1716
+        },
+        {
+            "text": "The range against the launch angle, with its peak at π/4 (45°), as derived above:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 1776
+        },
+        {
+            "height": 156,
+            "traces": "range(v_0, θ)",
+            "type": "plot",
+            "width": 480,
+            "x": 96,
+            "xMax": "π/2",
+            "xMin": "0",
+            "xVariable": "θ",
+            "y": 1812,
+            "yMax": "",
+            "yMin": "0 m"
+        },
+        {
+            "text": "Height over time at 30°, 45° and 60°. The steeper the launch, the higher and longer the flight:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 2208
+        },
+        {
+            "height": 216,
+            "traces": "height(t, v_0, 30 deg), height(t, v_0, 45 deg), height(t, v_0, 60 deg)",
+            "type": "plot",
+            "width": 480,
+            "x": 96,
+            "xMax": "3.6 s",
+            "xMin": "0 s",
+            "xVariable": "t",
+            "y": 2244,
+            "yMax": "",
+            "yMin": "0 m"
+        },
+        {
+            "text": "The same three paths in space. 30° and 60° land at the same spot, and 45° goes farthest:",
+            "type": "text",
+            "width": 672,
+            "x": 72,
+            "y": 2544
+        },
+        {
+            "height": 216,
+            "traces": "trajectory(X, v_0, 30 deg), trajectory(X, v_0, 45 deg), trajectory(X, v_0, 60 deg)",
+            "type": "plot",
+            "width": 480,
+            "x": 96,
+            "xMax": "42 m",
+            "xMin": "0 m",
+            "xVariable": "X",
+            "y": 2580,
+            "yMax": "",
+            "yMin": "0 m"
+        }
+    ],
+    "version": 5
+}

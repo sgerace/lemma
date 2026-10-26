@@ -1030,6 +1030,17 @@ private slots:
 
         QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/cantilever-beam.lemma"), &error),
                  qPrintable(error));
+
+        QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/classical-mechanics.lemma"), &error),
+                 qPrintable(error));
+        values.clear();
+        for (const lemma::Region& r : sheet().regions()) {
+            QVERIFY2(r.result.status != lemma::RegionResult::Status::Error, r.result.error.c_str());
+            values << value(r);
+        }
+        QVERIFY(values.contains(QStringLiteral("t == 2 v sin(θ)/g"))); // the time of flight
+        QVERIFY(values.contains(QStringLiteral("θ == π/4")));           // the best launch angle
+        QVERIFY(values.contains(QStringLiteral("40.789 m")));           // the range at 45°
     }
 
     void anOperationBeyondItsScopeShowsANote()
