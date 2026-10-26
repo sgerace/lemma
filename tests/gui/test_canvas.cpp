@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPdfWriter>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -1146,6 +1147,31 @@ private slots:
         const QByteArray bytes = pdf.readAll();
         QVERIFY(bytes.startsWith("%PDF"));
         QCOMPARE(bytes.count("/Type /Page\n") + bytes.count("/Type /Page\r") + bytes.count("/Type /Page "), 3);
+    }
+
+    void textIsTheSameSizeInThePdf()
+    {
+        // Fonts are sized in document units, so text measures the same on a 72 dpi screen
+        // (macOS), a 96 dpi one (Windows, and offscreen) and the PDF (96 dpi): it wraps the
+        // same everywhere and covers nothing below.
+        const int t = sheet().addTextRegion(72, 120, 120, "one two three four five six\nseven");
+        canvas_->worksheetReset();
+        const lemma::Region& r = *sheet().region(t);
+
+        QImage macScreen(10, 10, QImage::Format_ARGB32);
+        macScreen.setDotsPerMeterX(2835); // 72 dpi
+        macScreen.setDotsPerMeterY(2835);
+        QTemporaryDir dir;
+        QPdfWriter pdf(dir.filePath("out.pdf"));
+        pdf.setResolution(96);
+
+        const QRectF onScreen = canvas_->regionRect(r);
+        for (const QPaintDevice* device : {static_cast<const QPaintDevice*>(&macScreen), static_cast<const QPaintDevice*>(&pdf)}) {
+            const QRectF rect = canvas_->regionRect(r, device);
+            QVERIFY2(qAbs(rect.height() - onScreen.height()) < 0.5,
+                     qPrintable(QStringLiteral("%1 vs %2").arg(rect.height()).arg(onScreen.height())));
+            QVERIFY(qAbs(rect.width() - onScreen.width()) < 2.0);
+        }
     }
 
     void snapshot()

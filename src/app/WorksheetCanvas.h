@@ -67,8 +67,9 @@ public:
     // The caret in the math region being edited, if one is.
     std::optional<lemma::MathCaret> mathCaret() const;
     // The region's outline, as hit-tested and selected. A text region being edited spans
-    // its whole wrap width; otherwise it is as wide as its longest line.
-    QRectF regionRect(const lemma::Region& r) const;
+    // its whole wrap width; otherwise it is as wide as its longest line. Text is measured
+    // for `device`, the screen if null.
+    QRectF regionRect(const lemma::Region& r, const QPaintDevice* device = nullptr) const;
     // Where a plot draws its curves.
     QRectF plotFrame(const lemma::Region& r) const;
     // The point on a plot field's baseline just before character `index` of its text.
@@ -143,7 +144,7 @@ private:
     // A symbolic evaluation's note, about what an operation couldn't do.
     bool showsNote(const lemma::Region& r) const;
     // Lays out a text region in document coordinates, wrapped at its width.
-    void layoutText(QTextLayout& layout, const lemma::Region& r) const;
+    void layoutText(QTextLayout& layout, const lemma::Region& r, const QPaintDevice* device = nullptr) const;
 
     // The text a field of a region holds: a plot's placeholder, or any region's source.
     static std::string& fieldSource(lemma::Region& r, int field);
