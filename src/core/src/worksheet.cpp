@@ -211,6 +211,9 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
         std::vector<std::string> order;
         lowering.units = &result.units;
         lowering.order = &order;
+        lowering.note = &result.note;
+        std::string main;
+        lowering.main = &main;
         const MathNode& expression = math.children[0];
         const bool equation = expression.kind == MathNode::Kind::Equation;
         std::vector<Expr> sides;
@@ -285,6 +288,7 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
 
         ExprDisplayOptions display;
         display.order = order;
+        display.main = main;
         for (const Operation& op : operations) {
             if (!op.variable.empty()) {
                 display.main = op.variable;

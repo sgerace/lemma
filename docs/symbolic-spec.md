@@ -570,8 +570,11 @@ an expression does, numerically with `=` and symbolically with `→`. The keywor
 
 Each operator is computed as its keyword is (9.6, 9.7), on its own operand, wherever
 it is in the expression: `d/dx x³ + 1 →` is `3 x² + 1`. Definitions are substituted
-first and `keep` and `real` apply, as for the rest of the region; the variable stays a
-name inside the operator, as a keyword's does.
+first and `keep` and `real` apply, as for the rest of the region. Inside the operator
+the variable stays a name, as a keyword's does, but one with a value for telling units
+(8), as a parameter has: `d/dx (x·2 m) →` is `2 m`. The first derivative's or
+indefinite integral's variable is the result's main variable for display (11), unless
+a keyword names one.
 
 Beyond the engine's scope, the operator stays in the result as written, with the
 keyword's note: `∫₀¹ e^(x²) dx →` is `∫₀¹ e^(x²) dx`, "Couldn't integrate this". That

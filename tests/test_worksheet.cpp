@@ -419,6 +419,36 @@ TEST_CASE("Symbolic evaluation substitutes the definitions above it (7)")
 }
 
 
+TEST_CASE("Derivative and integral operators under → (15.2, 15.4)")
+{
+    // The cantilever's deflection, with its slope defined by the operator: no → and no keep.
+    const std::string y = "y(x) := P*x^2*(3*L - x)/(6*E*I)";
+    const std::string theta = "θ(x) := diff(y(x), x)";
+    CHECK(lastValue({y, theta, "θ(x) -> keep, P, L, E, I"}) == "P x*(2 L - x)/(2 E I)");
+    CHECK(lastValue({y, theta, "integrate(θ(x), x, 0, L) -> keep, P, L, E, I"}) == "P L^3/(3 E I)");
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "E := 200 GPa", "I := 12500000/3 mm^4", y, theta,
+                     "integrate(θ(x), x, 0, L) ->"})
+          == "0.025 m");
+    // The same as the keywords.
+    CHECK(lastValue({y, "diff(y(x), x) -> keep, P"}) == lastValue({y, "y(x) -> keep, P; diff, x"}));
+
+    // Its variable is the main variable, as a keyword's is (section 11).
+    CHECK(lastValue({"diff(a*x^2 + b*x, x) ->"}) == "2 a x + b");
+
+    // A derivative's variable then means what it does where the operator stands (15.1).
+    CHECK(lastValue({"x := 2", "diff(x^3, x) ->"}) == "12");
+    CHECK(lastValue({"f(t) := diff(t^3, t) ->", "f(2) ="}) == "12");
+    // Units: the variable has a value inside the operand, so 2 m is a length.
+    CHECK(lastValue({"diff(x*2 m, x) ->"}) == "2 m");
+    CHECK(lastValue({"integrate(2 N, x, 0, 3 m) ->"}) == "6 N*m");
+
+    // Beyond the engine, a note, not an error.
+    const Worksheet ws = sheet({"integrate(exp(x^2), x, 0, 1) ->"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).note == "Couldn't integrate this");
+    CHECK(last(ws).value == "integrate(e^x^2, x, 0, 1)");
+}
+
 TEST_CASE("A parameter named like a unit stays apart from the unit (8)")
 {
     // As in the classical mechanics example, with the distance downrange called s.
@@ -725,4 +755,3 @@ TEST_CASE("A symbolic definition defines its name as the result (7.1)")
     CHECK(lastError({"s := x == 1"}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
     CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
 }
-

@@ -120,13 +120,21 @@ void read(const MathNode& n, std::vector<Reading>& out, bool& multiplied)
     case MathNode::Kind::Definition:
     case MathNode::Kind::Evaluation:
     case MathNode::Kind::Symbolic:
-        // A function's name isn't read, and its arguments stand apart.
+    case MathNode::Kind::Derivative:
+    case MathNode::Kind::Integral: {
+        // A function's name and an operator's variable aren't read, and the other slots
+        // stand apart.
+        const bool calculus = n.kind == MathNode::Kind::Derivative || n.kind == MathNode::Kind::Integral;
         for (std::size_t i = n.kind == MathNode::Kind::Call ? 1 : 0; i < c.size(); ++i) {
+            if (calculus && &c[i] == &calculusVariable(n)) {
+                continue;
+            }
             multiplied = false;
             read(c[i], out, multiplied);
         }
         multiplied = false;
         return;
+    }
     default: // Negate, Radical, Group: what's inside, as it reads
         for (const MathNode& child : c) {
             read(child, out, multiplied);
@@ -151,6 +159,55 @@ void collectUnitCandidates(const MathNode& n, std::unordered_set<int>& out)
             out.insert(leaf.id);
         }
     }
+}
+
+// A derivative or integral's parts (section 15), from its node or from a call of diff or
+// integrate typed by name.
+struct CalculusParts {
+    bool derivative = true;
+    const MathNode* operand = nullptr;
+    const MathNode* variable = nullptr;
+    const MathNode* order = nullptr; // an n-th derivative's
+    const MathNode* from = nullptr;  // a definite integral's limits
+    const MathNode* to = nullptr;
+};
+
+std::optional<CalculusParts> calculusParts(const MathNode& m)
+{
+    const auto& c = m.children;
+    CalculusParts p;
+    if (m.kind == MathNode::Kind::Derivative || m.kind == MathNode::Kind::Integral) {
+        p.derivative = m.kind == MathNode::Kind::Derivative;
+        p.operand = &calculusOperand(m);
+        p.variable = &calculusVariable(m);
+        if (p.derivative && c.size() == 3) {
+            p.order = &c[1];
+        } else if (!p.derivative && c.size() == 4) {
+            p.from = &c[0];
+            p.to = &c[1];
+        }
+        return p;
+    }
+    // diff(f, x, n) and integrate(f, x, a, b), their linear forms.
+    if (m.kind != MathNode::Kind::Call || c[0].kind != MathNode::Kind::Identifier || c.size() < 3
+        || c[2].kind != MathNode::Kind::Identifier) {
+        return std::nullopt;
+    }
+    p.operand = &c[1];
+    p.variable = &c[2];
+    if (c[0].text == "diff" && c.size() <= 4) {
+        p.order = c.size() == 4 ? &c[3] : nullptr;
+        return p;
+    }
+    if (c[0].text == "integrate" && (c.size() == 3 || c.size() == 5)) {
+        p.derivative = false;
+        if (c.size() == 5) {
+            p.from = &c[3];
+            p.to = &c[4];
+        }
+        return p;
+    }
+    return std::nullopt;
 }
 
 // Lowers a region's tree, replacing the names defined above it by their definitions
@@ -237,9 +294,23 @@ private:
             return candidates;
         }
         bool free = false;
+        std::vector<std::string> bound; // the variables of the operators around a node
         const auto visit = [&](const auto& self, const MathNode& n) -> void {
-            if (n.kind == MathNode::Kind::Identifier && !candidates.contains(n.id) && isFree(n.text, scope)) {
+            if (n.kind == MathNode::Kind::Identifier && !candidates.contains(n.id) && !listed(bound, n.text)
+                && isFree(n.text, scope)) {
                 free = true;
+            }
+            if (const auto parts = calculusParts(n)) {
+                // The variable has a value in the operand, as a parameter does.
+                for (const MathNode* limit : {parts->order, parts->from, parts->to}) {
+                    if (limit) {
+                        self(self, *limit);
+                    }
+                }
+                bound.push_back(parts->variable->text);
+                self(self, *parts->operand);
+                bound.pop_back();
+                return;
             }
             for (std::size_t i = n.kind == MathNode::Kind::Call ? 1 : 0; i < n.children.size(); ++i) {
                 self(self, n.children[i]);
@@ -308,11 +379,82 @@ private:
         return variable(name);
     }
 
+    // d/dx f and ∫ f dx, as the keywords compute them, on the operand alone (section 15.2).
+    Expr calculus(const CalculusParts& op, const Scope& scope)
+    {
+        if (op.variable->kind != MathNode::Kind::Identifier) {
+            throw Error("Fill in the placeholder", 0, 0, op.variable->id);
+        }
+        const std::string& x = op.variable->text;
+        int order = 1;
+        if (op.order) {
+            const std::string& t = op.order->text;
+            const bool digits = op.order->kind == MathNode::Kind::Number && !t.empty() && t.size() <= 2
+                                && t.find_first_not_of("0123456789") == std::string::npos;
+            if (!digits || std::stoi(t) < 1) {
+                throw Error("The order is a whole number from 1 to 99", 0, 0, op.order->id);
+            }
+            order = std::stoi(t);
+        }
+        // In the operand, the variable is a name of its own, bound like a parameter.
+        Bindings bound;
+        if (scope.params) {
+            std::copy_if(scope.params->begin(), scope.params->end(), std::back_inserter(bound),
+                         [&](const auto& p) { return p.first != x; });
+        }
+        const Expr variableExpr = Expr::variable(x, !listed(o_.real, x));
+        bound.emplace_back(x, variableExpr);
+        Scope inner = scope;
+        inner.params = &bound;
+        const Expr f = lower(*op.operand, inner);
+        std::optional<Expr> from;
+        std::optional<Expr> to;
+        if (op.from) {
+            from = lower(*op.from, scope);
+            to = lower(*op.to, scope);
+        }
+
+        Expr result;
+        try {
+            result = op.derivative ? differentiate(f, x, order)
+                     : from        ? integrate(f, x, *from, *to)
+                                   : integrate(f, x);
+        } catch (const BeyondScope& beyond) {
+            // Left as it is, with the keyword's note: not an error.
+            if (o_.note && o_.note->empty()) {
+                *o_.note = beyond.what();
+            }
+            std::vector<Expr> args{f, variableExpr};
+            if (op.derivative && order != 1) {
+                args.emplace_back(order);
+            }
+            if (from) {
+                args.push_back(*from);
+                args.push_back(*to);
+            }
+            return Expr::call(op.derivative ? "diff" : "integrate", std::move(args));
+        }
+        if (from) {
+            return result; // a definite integral doesn't depend on x
+        }
+        if (o_.main && o_.main->empty()) {
+            *o_.main = x;
+        }
+        // Then x means what it does where the operator stands (15.1).
+        const Expr outer = identifier(*op.variable, scope);
+        return replaceSymbols(result, [&](const Symbol& s) -> std::optional<Expr> {
+            return s.kind == Symbol::Kind::Variable && s.name == x ? std::optional(outer) : std::nullopt;
+        });
+    }
+
     Expr call(const MathNode& m, const Scope& scope)
     {
         const auto& c = m.children;
         if (c[0].kind != MathNode::Kind::Identifier) {
             throw Error("Fill in the placeholder", 0, 0, c[0].id);
+        }
+        if (const auto parts = calculusParts(m)) {
+            return calculus(*parts, scope);
         }
         const std::string& name = c[0].text;
         // A defined value comes first, as it reads: in M (h/2), M's names before h.
@@ -415,7 +557,7 @@ private:
                 throw Error("A keyword goes after →", 0, 0, m.id);
             case MathNode::Kind::Derivative:
             case MathNode::Kind::Integral:
-                throw Error("Derivatives and integrals can't be evaluated symbolically yet", 0, 0, m.id);
+                return calculus(*calculusParts(m), scope);
             case MathNode::Kind::Definition:
             case MathNode::Kind::Evaluation:
             case MathNode::Kind::Symbolic:
@@ -627,6 +769,9 @@ public:
             return MathNode(MathNode::Kind::Call,
                             {MathNode::identifier(functionName(e.function())), raise(e.argument())});
         case Expr::Kind::Call: {
+            if (auto shown = calculus(e)) {
+                return std::move(*shown);
+            }
             std::vector<MathNode> children{MathNode::identifier(e.name())};
             for (const Expr& a : e.arguments()) {
                 children.push_back(raise(a));
@@ -638,6 +783,35 @@ public:
     }
 
 private:
+    // A derivative or integral the engine couldn't compute, kept as diff(f, x, n) or
+    // integrate(f, x, a, b) (section 15.2), shown as the operator.
+    std::optional<MathNode> calculus(const Expr& e) const
+    {
+        const auto& a = e.arguments();
+        const bool derivative = e.name() == "diff" && (a.size() == 2 || a.size() == 3);
+        const bool integral = e.name() == "integrate" && (a.size() == 2 || a.size() == 4);
+        if ((!derivative && !integral) || a[1].kind() != Expr::Kind::Symbol) {
+            return std::nullopt;
+        }
+        MathNode variable = MathNode::identifier(a[1].symbol().name);
+        if (derivative) {
+            MathNode d(MathNode::Kind::Derivative, {std::move(variable)});
+            if (a.size() == 3) {
+                d.children.push_back(raise(a[2]));
+            }
+            d.children.push_back(raise(a[0]));
+            return d;
+        }
+        MathNode i(MathNode::Kind::Integral);
+        if (a.size() == 4) {
+            i.children.push_back(raise(a[2]));
+            i.children.push_back(raise(a[3]));
+        }
+        i.children.push_back(raise(a[0]));
+        i.children.push_back(std::move(variable));
+        return i;
+    }
+
     MathNode number(const Number& n) const
     {
         if (n.isNegative()) {

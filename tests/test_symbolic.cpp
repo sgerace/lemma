@@ -222,11 +222,42 @@ TEST_CASE("Errors name the node they come from")
     CHECK(errorNode(hole) == hole.children[1].id);
 }
 
+TEST_CASE("Derivative and integral operators are computed where they stand (15.2)")
+{
+    CHECK(simplified("diff(x^3, x) + 1") == "3 x^2 + 1");
+    CHECK(simplified("diff(x^3, x, 2)") == "6 x");
+    CHECK(simplified("integrate(x^2, x)") == "x^3/3");
+    CHECK(simplified("integrate(x^2, x, 0, a)") == "a^3/3");
+    CHECK(simplified("integrate(w*x, x, 0, L)") == "w L^2/2");
+    // A definite integral's variable is its own: the x outside is another name.
+    CHECK(simplified("integrate(x, x, 0, 1) + x") == "x + 1/2");
+    CHECK(simplified("integrate(diff(x^4, x), x)") == "x^4");
+
+    // Beyond the engine, the operator stays, shown as itself, with the keyword's note.
+    std::string note;
+    LowerOptions options;
+    options.note = &note;
+    const MathNode tree = mathFromLinear("2*integrate(exp(x^2), x, 0, 1)");
+    const Expr e = simplify(exprFromMath(tree, options));
+    CHECK(note == "Couldn't integrate this");
+    const MathNode shown = show(e, tree);
+    CHECK(toLinear(shown) == "2 integrate(e^x^2, x, 0, 1)");
+    CHECK(shown.children[1].kind == MathNode::Kind::Integral);
+    note.clear();
+    CHECK(toLinear(show(simplify(exprFromMath(mathFromLinear("diff(f(x), x)"), options)), tree)) == "diff(f(x), x)");
+    CHECK(note == "Couldn't differentiate f, a function with no definition");
+
+    // An order that isn't a whole number is an error on it.
+    const MathNode bad = mathFromLinear("diff(x^2, x, 1.5)");
+    CHECK(errorNode(bad) == bad.children[1].id);
+}
+
 TEST_CASE("A result's text parses back to the same expression")
 {
     for (const char* source : {"w*L^4/(8*E*I)", "x^2 - 5*x + 6", "-(a + b)", "sqrt(8)*x", "a - b/c",
                                "P*x*(2*L - x)/(2*E*I)", "exp(-k*t)", "x^(-2/3)", "abs(x - y)", "3/(2*x)",
-                               "sin(x)^2/cos(x)", "2.5*x", "pi*r^2"}) {
+                               "sin(x)^2/cos(x)", "2.5*x", "pi*r^2", "2*integrate(exp(x^2), x, 0, 1)",
+                               "diff(f(x), x, 2) + 1"}) {
         const Expr e = simplify(parse(source));
         const std::string text = toLinear(show(e, mathFromLinear(source)));
         INFO(source << " -> " << text);
