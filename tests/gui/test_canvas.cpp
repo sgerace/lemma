@@ -1033,6 +1033,11 @@ private slots:
         QVERIFY(values.contains(QStringLiteral("P x*(2 L - x)/(2 E I)"))); // the slope, derived
         QVERIFY(values.contains(QStringLiteral("25 mm")));                 // the tip deflection
         QVERIFY(values.contains(QStringLiteral("10 kN*m")));               // the moment at the support
+        // With the operators (#41): the slope at the tip, the moment, and the tip
+        // deflection as the slope's integral.
+        QVERIFY(values.contains(QStringLiteral("0.015")));
+        QVERIFY(values.contains(QStringLiteral("P*(L - x)")));
+        QVERIFY(values.contains(QStringLiteral("P L^3/(3 E I)")));
 
         QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/cantilever-beam.lemma"), &error),
                  qPrintable(error));

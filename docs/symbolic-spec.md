@@ -634,3 +634,7 @@ results in `tests/test_symbolic.cpp` and `tests/test_worksheet.cpp`.
    quadrature, plots.
 4. **Examples:** `examples/beam-derivation.lemma` and
    `examples/classical-mechanics.lemma` use the operators where they read better.
+
+All four steps are done. In the beam derivation, the slope is `d/dx y(x)`, the moment
+`E I d/dx θ(x)`, and the tip deflection `∫₀ᴸ θ(x) dx`, with the slope at the tip
+beside it as a number.
