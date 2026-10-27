@@ -72,6 +72,8 @@ private:
     Change typeCloseParen();
     Change typeComma();
     Change typeRadical();
+    Change typeCalculus(char key); // '?' a derivative, '&' a definite integral, 'I' an indefinite one
+    bool addDerivativeOrder();
     Change typeStatement(char op);
     Change typeSymbolic();  // Ctrl+., or "→"
     Change typeEquation();  // Ctrl+=, or "⩵"
@@ -80,6 +82,7 @@ private:
     Change eraseAtLeftEdge(int id);
     Change eraseAtRightEdge(int id);
     bool removePlaceholder(int id, bool before);
+    bool removeCalculusPlaceholder(MathNode& p, int index, bool before);
     bool fillMissingOperator(char op);
     Change step(bool forward);
 

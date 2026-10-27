@@ -542,3 +542,99 @@ Decided:
    number is involved, as on a calculator.
 5. **Free symbols are positive reals** (5.3), with the `real` keyword to opt a name
    out, and `solve` keeping every root.
+
+## 15. Derivative and integral operators (#41)
+
+Status: **agreed** (#41). The editing, layout and storage are in
+the editor spec (sections 2, 8.5, 9 and 11).
+
+`d/dx f` and `∫ f dx` are operators, as in older Mathcad versions: they work anywhere
+an expression does, numerically with `=` and symbolically with `→`. The keywords
+`diff` and `integrate` stay; `y(x) → diff, x` and `d/dx y(x) →` give the same result.
+
+### 15.1 Meaning
+
+- **Derivative.** `dⁿ/dxⁿ f` is `f` differentiated `n` times with respect to `x`,
+  then taken where it stands: `x` keeps its meaning outside, so with `x := 2` above,
+  `d/dx x² =` is `4`. Inside a function of `x`, `x` is the parameter, so
+  `θ(x) := d/dx y(x)` is the slope of `y` at each call's `x`.
+- **Definite integral.** In `∫ₐᵇ f dx`, `x` is local to the integral: a name defined
+  above as `x` doesn't reach the integrand, and the result doesn't depend on `x`.
+- **Indefinite integral.** `∫ f dx` is an antiderivative, with no constant (9.7), and
+  like a derivative it then takes `x`'s meaning where it stands.
+- **Units.** A derivative's dimension is `f`'s over `x`'s; an integral's is `f`'s times
+  `x`'s. The limits must have the same dimension, except that a limit of exactly `0`
+  takes the other's, so `∫₀ᴸ` works with `L` a length.
+
+### 15.2 Under `→`
+
+Each operator is computed as its keyword is (9.6, 9.7), on its own operand, wherever
+it is in the expression: `d/dx x³ + 1 →` is `3 x² + 1`. Definitions are substituted
+first and `keep` and `real` apply, as for the rest of the region. Inside the operator
+the variable stays a name, as a keyword's does, but one with a value for telling units
+(8), as a parameter has: `d/dx (x·2 m) →` is `2 m`. The first derivative's or
+indefinite integral's variable is the result's main variable for display (11), unless
+a keyword names one.
+
+Beyond the engine's scope, the operator stays in the result as written, with the
+keyword's note: `∫₀¹ e^(x²) dx →` is `∫₀¹ e^(x²) dx`, "Couldn't integrate this". That
+is still not an error.
+
+### 15.3 Numerically
+
+Numeric evaluation (`=`, definitions, function calls and plots) uses the engine, so
+results are exact where it can find them:
+
+- **Derivatives** are always exact. The operand is lowered to an expression in the
+  evaluator's environment (functions inlined, values substituted, the variable kept
+  as a name), differentiated, and evaluated at the variable's value. There is no
+  numeric differentiation: what the engine can't differentiate (`min`, `max`, an
+  undefined function) is an error, "Couldn't differentiate min".
+- **Definite integrals** are exact when the engine can integrate the integrand.
+  Otherwise they are computed numerically by adaptive Gauss–Kronrod quadrature
+  (7 and 15 points) to a relative tolerance of 10⁻¹⁰, so `∫₀¹ e^(x²) dx =` is
+  `1.463`. If it doesn't converge (an integrand that is infinite or undefined on the
+  interval), it's an error, "This integral doesn't converge". The limits must be
+  finite; infinite limits come later.
+- **Indefinite integrals** need the engine's antiderivative. Without one, it's an
+  error: "Couldn't integrate this; give it limits to integrate numerically".
+- **Units** are checked as in 15.1. The integrand must have the same dimension
+  everywhere on the interval.
+- **Cost.** A plot evaluates its traces at each of its points, so a derivative or an
+  integral is computed for each. Worksheet-size expressions make this cheap, and the
+  engine's result for an operator can be cached per evaluation if it isn't.
+
+### 15.4 Definitions
+
+`θ(x) := d/dx y(x)` is an ordinary numeric definition, so it has no `→` and needs no
+`keep`. Its tree is also what symbolic regions below substitute (7), so with the
+cantilever's `y(x)` above:
+
+| Region | Result |
+|---|---|
+| `θ(L) =` | `0.015` |
+| `θ(x) →` with `keep, P, L, E, I` | `P x (2 L − x)/(2 E I)` |
+| `θ(x) →` | the same, with the values substituted |
+| `∫₀ᴸ θ(x) dx =` | `25 mm` |
+| `∫₀ᴸ θ(x) dx →` with `keep, P, L, E, I` | `P L³/(3 E I)` |
+| a plot of `d/dx y(x)` | the same curve as a plot of `θ(x)` |
+| `∫₀¹ e^(x²) dx =` | `1.463`, numerically |
+
+### 15.5 Plan
+
+Each step lands with tests: editing in `tests/test_math.cpp` in the spec's notation,
+with the new keys in its randomized test; keys in `tests/gui/test_canvas.cpp`;
+results in `tests/test_symbolic.cpp` and `tests/test_worksheet.cpp`.
+
+1. **Tree, editing and layout:** the `Derivative` and `Integral` nodes, `?`, `&` and
+   Ctrl+I, deletion, typesetting, linear form and paste, and file version 6.
+2. **Under `→`:** the operators in the symbolic bridge, unevaluated ones kept in
+   results with a note.
+3. **Numerically:** derivatives through the engine, definite integrals exact or by
+   quadrature, plots.
+4. **Examples:** `examples/beam-derivation.lemma` and
+   `examples/classical-mechanics.lemma` use the operators where they read better.
+
+All four steps are done. In the beam derivation, the slope is `d/dx y(x)`, the moment
+`E I d/dx θ(x)`, and the tip deflection `∫₀ᴸ θ(x) dx`, with the slope at the tip
+beside it as a number.

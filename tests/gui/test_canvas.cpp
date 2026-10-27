@@ -848,7 +848,7 @@ private slots:
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-        QCOMPARE(root.value("version").toInt(), 5); // 4: math regions store their tree; 5: symbolic
+        QCOMPARE(root.value("version").toInt(), 6); // 4: trees; 5: symbolic; 6: derivatives and integrals
 
         lemma::Worksheet loaded;
         QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
@@ -914,7 +914,7 @@ private slots:
         QTemporaryDir dir;
         QFile f(dir.filePath("bad.lemma"));
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(R"({"format": "lemma-worksheet", "version": 5, "regions": [{"type": "math", "x": 72, "y": 96,
+        f.write(R"({"format": "lemma-worksheet", "version": 6, "regions": [{"type": "math", "x": 72, "y": 96,
                     "math": {"kind": "add", "lhs": {"kind": "number", "text": "1"}}}]})");
         f.close();
 
@@ -923,16 +923,21 @@ private slots:
         QVERIFY(!DocumentIO::load(ws, f.fileName(), &error));
         QVERIFY(error.contains("damaged"));
 
-        // A keyword outside a symbolic evaluation's keyword slots, or an equation inside
-        // an expression, is damage too.
+        // A keyword outside a symbolic evaluation's keyword slots, an equation inside an
+        // expression, a variable that isn't a name, or one limit alone, is damage too.
         for (const char* math : {R"({"kind": "keyword", "name": {"kind": "identifier", "text": "solve"},
                                      "args": [{"kind": "placeholder"}]})",
                                  R"({"kind": "add", "lhs": {"kind": "number", "text": "1"},
                                      "rhs": {"kind": "equation", "lhs": {"kind": "placeholder"},
-                                             "rhs": {"kind": "placeholder"}}})"}) {
+                                             "rhs": {"kind": "placeholder"}}})",
+                                 R"({"kind": "derivative", "expr": {"kind": "identifier", "text": "y"},
+                                     "var": {"kind": "number", "text": "2"}})",
+                                 R"({"kind": "integral", "expr": {"kind": "identifier", "text": "y"},
+                                     "var": {"kind": "identifier", "text": "x"},
+                                     "from": {"kind": "number", "text": "0"}})"}) {
             QFile g(dir.filePath("bad2.lemma"));
             QVERIFY(g.open(QIODevice::WriteOnly | QIODevice::Truncate));
-            g.write(QByteArray(R"({"format": "lemma-worksheet", "version": 5, "regions": [{"type": "math", "x": 72,
+            g.write(QByteArray(R"({"format": "lemma-worksheet", "version": 6, "regions": [{"type": "math", "x": 72,
                                    "y": 96, "math": )") + math + "}]}");
             g.close();
             QVERIFY(!DocumentIO::load(ws, g.fileName(), &error));
@@ -1028,6 +1033,11 @@ private slots:
         QVERIFY(values.contains(QStringLiteral("P x*(2 L - x)/(2 E I)"))); // the slope, derived
         QVERIFY(values.contains(QStringLiteral("25 mm")));                 // the tip deflection
         QVERIFY(values.contains(QStringLiteral("10 kN*m")));               // the moment at the support
+        // With the operators (#41): the slope at the tip, the moment, and the tip
+        // deflection as the slope's integral.
+        QVERIFY(values.contains(QStringLiteral("0.015")));
+        QVERIFY(values.contains(QStringLiteral("P*(L - x)")));
+        QVERIFY(values.contains(QStringLiteral("P L^3/(3 E I)")));
 
         QVERIFY2(DocumentIO::load(sheet(), QStringLiteral(LEMMA_EXAMPLES_DIR "/cantilever-beam.lemma"), &error),
                  qPrintable(error));
@@ -1072,6 +1082,51 @@ private slots:
         }
         QCOMPARE(value(loaded.regions()[0]), QStringLiteral("x^3")); // recomputed, not saved
         QCOMPARE(value(loaded.regions()[1]), QStringLiteral("a == 2 c"));
+    }
+
+    void saveAndLoadDerivativesAndIntegrals()
+    {
+        for (const char* source : {"θ(x) := diff(y(x), x)", "diff(f, x, 2)", "integrate(f, x)",
+                                   "integrate(θ(x), x, 0, L) ="}) {
+            sheet().addRegion(72, 96 + 48 * static_cast<double>(sheet().regions().size()), source);
+        }
+        sheet().evaluate();
+        QTemporaryDir dir;
+        const QString path = dir.filePath("calculus.lemma");
+        QString error;
+        QVERIFY2(DocumentIO::save(sheet(), path, &error), qPrintable(error));
+        lemma::Worksheet loaded;
+        QVERIFY2(DocumentIO::load(loaded, path, &error), qPrintable(error));
+        QCOMPARE(loaded.regions().size(), sheet().regions().size());
+        for (std::size_t i = 0; i < loaded.regions().size(); ++i) {
+            QVERIFY(loaded.regions()[i].math.sameAs(sheet().regions()[i].math));
+        }
+    }
+
+    void questionMarkAndAmpersandMakeDerivativesAndIntegrals()
+    {
+        // ? and &, typed as text; Ctrl+I, a shortcut (editor spec, section 8.5).
+        click({72, 120});
+        keys("?x{right}x^3");
+        QCOMPARE(linear(sheet().regions()[0]), QStringLiteral("diff(x^3, x)"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+
+        click({72, 240});
+        keys("&x{tab}x{tab}0{tab}1");
+        QCOMPARE(linear(sheet().regions()[1]), QStringLiteral("integrate(x, x, 0, 1)"));
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+
+        click({72, 360});
+        QTest::keyClick(canvas_.get(), Qt::Key_I, Qt::ControlModifier);
+        keys("x{tab}x");
+        QCOMPARE(linear(sheet().regions()[2]), QStringLiteral("integrate(x, x)"));
+
+        // The integral's sign is drawn bigger than the text around it.
+        const auto& items = canvas_->mathLayout(sheet().regions()[2]).items;
+        const auto sign = std::find_if(items.begin(), items.end(),
+                                       [](const lemma::MathLayoutItem& item) { return item.text == "∫"; });
+        QVERIFY(sign != items.end());
+        QVERIFY(sign->size > WorksheetCanvas::kMathSize);
     }
 
     void saveAndLoadRoundTrip()
@@ -1212,6 +1267,13 @@ private slots:
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         click({480, 984});
         keys("k*t^2{right}+u*t+v{symbolic}solve,t");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        // A second derivative, and a definite integral with its limits.
+        click({72, 984});
+        keys("?x^2{right}x^3{right}+x");
+        QTest::keyClick(canvas_.get(), Qt::Key_Escape);
+        click({264, 984});
+        keys("&\\x^2{right}{right}+1{tab}x{tab}0{tab}L");
         QTest::keyClick(canvas_.get(), Qt::Key_Escape);
         shiftClick(regionPoint(sheet().regions()[1], 1)); // selection shows on screen, not in the PDF
 

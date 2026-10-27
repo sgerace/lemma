@@ -290,31 +290,28 @@
                 },
                 "rhs": {
                     "expr": {
-                        "args": [
-                            {
-                                "kind": "identifier",
-                                "text": "t"
-                            }
-                        ],
-                        "kind": "call",
-                        "name": {
-                            "kind": "identifier",
-                            "text": "y"
-                        }
-                    },
-                    "keywords": [
-                        {
+                        "expr": {
                             "args": [
                                 {
                                     "kind": "identifier",
                                     "text": "t"
                                 }
                             ],
-                            "kind": "keyword",
+                            "kind": "call",
                             "name": {
                                 "kind": "identifier",
-                                "text": "diff"
+                                "text": "y"
                             }
+                        },
+                        "kind": "derivative",
+                        "var": {
+                            "kind": "identifier",
+                            "text": "t"
+                        }
+                    },
+                    "keywords": [
+                        {
+                            "kind": "placeholder"
                         }
                     ],
                     "kind": "symbolic"
@@ -487,23 +484,24 @@
                 },
                 "rhs": {
                     "expr": {
-                        "kind": "identifier",
-                        "text": "R"
-                    },
-                    "keywords": [
-                        {
-                            "args": [
-                                {
-                                    "kind": "identifier",
-                                    "text": "θ"
-                                }
-                            ],
-                            "kind": "keyword",
-                            "name": {
+                        "kind": "equation",
+                        "lhs": {
+                            "expr": {
                                 "kind": "identifier",
-                                "text": "diff"
+                                "text": "R"
+                            },
+                            "kind": "derivative",
+                            "var": {
+                                "kind": "identifier",
+                                "text": "θ"
                             }
                         },
+                        "rhs": {
+                            "kind": "number",
+                            "text": "0"
+                        }
+                    },
+                    "keywords": [
                         {
                             "args": [
                                 {
@@ -1158,5 +1156,5 @@
             "yMin": "0 m"
         }
     ],
-    "version": 5
+    "version": 6
 }

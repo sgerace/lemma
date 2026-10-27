@@ -1340,6 +1340,10 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
             editMath([](Editor& e) { return e.type("⩵"); }); // an equation's equals sign
             return;
         }
+        if (control && event->key() == Qt::Key_I) {
+            editMath([](Editor& e) { return e.type("∫"); }); // an indefinite integral, as in Mathcad
+            return;
+        }
         if (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) {
             copyMath(event->matches(QKeySequence::Cut));
             return;
@@ -1439,6 +1443,10 @@ void WorksheetCanvas::keyPressEvent(QKeyEvent* event)
     } else {
         if (event->matches(QKeySequence::Paste)) {
             startMath(pasteCommand()); // a new region at the crosshair
+            return;
+        }
+        if (control && event->key() == Qt::Key_I) {
+            startMath([](lemma::MathEditor& e) { return e.type("∫"); }); // as typing ? or & does
             return;
         }
         if (!selection_.isEmpty()) {

@@ -284,32 +284,26 @@
                 },
                 "rhs": {
                     "expr": {
-                        "args": [
-                            {
-                                "kind": "identifier",
-                                "text": "x"
-                            }
-                        ],
-                        "kind": "call",
-                        "name": {
-                            "kind": "identifier",
-                            "text": "y"
-                        }
-                    },
-                    "keywords": [
-                        {
+                        "expr": {
                             "args": [
                                 {
                                     "kind": "identifier",
                                     "text": "x"
                                 }
                             ],
-                            "kind": "keyword",
+                            "kind": "call",
                             "name": {
                                 "kind": "identifier",
-                                "text": "diff"
+                                "text": "y"
                             }
                         },
+                        "kind": "derivative",
+                        "var": {
+                            "kind": "identifier",
+                            "text": "x"
+                        }
+                    },
+                    "keywords": [
                         {
                             "args": [
                                 {
@@ -375,16 +369,23 @@
                             "style": "dot"
                         },
                         "rhs": {
-                            "args": [
-                                {
+                            "expr": {
+                                "args": [
+                                    {
+                                        "kind": "identifier",
+                                        "text": "x"
+                                    }
+                                ],
+                                "kind": "call",
+                                "name": {
                                     "kind": "identifier",
-                                    "text": "x"
+                                    "text": "θ"
                                 }
-                            ],
-                            "kind": "call",
-                            "name": {
+                            },
+                            "kind": "derivative",
+                            "var": {
                                 "kind": "identifier",
-                                "text": "θ"
+                                "text": "x"
                             }
                         },
                         "style": "dot"
@@ -394,24 +395,19 @@
                             "args": [
                                 {
                                     "kind": "identifier",
-                                    "text": "x"
-                                }
-                            ],
-                            "kind": "keyword",
-                            "name": {
-                                "kind": "identifier",
-                                "text": "diff"
-                            }
-                        },
-                        {
-                            "args": [
-                                {
-                                    "kind": "identifier",
                                     "text": "P"
                                 },
                                 {
                                     "kind": "identifier",
                                     "text": "L"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "E"
+                                },
+                                {
+                                    "kind": "identifier",
+                                    "text": "I"
                                 }
                             ],
                             "kind": "keyword",
@@ -502,40 +498,34 @@
         {
             "math": {
                 "expr": {
-                    "args": [
-                        {
-                            "kind": "identifier",
-                            "text": "x"
-                        }
-                    ],
-                    "kind": "call",
-                    "name": {
-                        "kind": "identifier",
-                        "text": "θ"
-                    }
-                },
-                "keywords": [
-                    {
+                    "expr": {
                         "args": [
                             {
                                 "kind": "identifier",
                                 "text": "x"
-                            },
-                            {
-                                "kind": "number",
-                                "text": "0"
-                            },
-                            {
-                                "kind": "identifier",
-                                "text": "L"
                             }
                         ],
-                        "kind": "keyword",
+                        "kind": "call",
                         "name": {
                             "kind": "identifier",
-                            "text": "integrate"
+                            "text": "θ"
                         }
                     },
+                    "from": {
+                        "kind": "number",
+                        "text": "0"
+                    },
+                    "kind": "integral",
+                    "to": {
+                        "kind": "identifier",
+                        "text": "L"
+                    },
+                    "var": {
+                        "kind": "identifier",
+                        "text": "x"
+                    }
+                },
+                "keywords": [
                     {
                         "args": [
                             {
@@ -621,7 +611,31 @@
             "y": 720,
             "yMax": "",
             "yMin": ""
+        },
+        {
+            "math": {
+                "expr": {
+                    "args": [
+                        {
+                            "kind": "identifier",
+                            "text": "L"
+                        }
+                    ],
+                    "kind": "call",
+                    "name": {
+                        "kind": "identifier",
+                        "text": "θ"
+                    }
+                },
+                "kind": "evaluation",
+                "unit": {
+                    "kind": "placeholder"
+                }
+            },
+            "type": "math",
+            "x": 456,
+            "y": 432
         }
     ],
-    "version": 5
+    "version": 6
 }

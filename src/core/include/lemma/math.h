@@ -37,6 +37,12 @@ struct MathNode {
         Symbolic,
         Keyword,     // children: name (an Identifier or Placeholder), then one or more arguments
         Equation,    // children: lhs, rhs; drawn with a bold "=", written "=="
+        // d/dx f (#41). children, in reading order: variable (a name slot), the order of
+        // an n-th derivative if there is one, then the operand.
+        Derivative,
+        // ∫ f dx (#41). children, in reading order: the lower and upper limits of a
+        // definite integral if it is one, then the integrand, then the variable (a name slot).
+        Integral,
     };
 
     Kind kind = Kind::Placeholder;
@@ -65,6 +71,10 @@ struct MathNode {
     bool sameAs(const MathNode& other) const;
 };
 
+// A derivative's operand or an integral's integrand, and the variable of either.
+const MathNode& calculusOperand(const MathNode& n);
+const MathNode& calculusVariable(const MathNode& n);
+
 // A fresh id for a new node.
 int newMathNodeId();
 
@@ -87,8 +97,8 @@ const MathNode* firstPlaceholder(const MathNode& root);
 // keyword slots, which may stay empty.
 const MathNode* firstRequiredPlaceholder(const MathNode& root);
 
-// True if node `id` is a name slot: a function's name, or a keyword's. Only a name can
-// go there, and operators can't be typed in it.
+// True if node `id` is a name slot: a function's name, a keyword's, or the variable of a
+// derivative or integral. Only a name can go there, and operators can't be typed in it.
 bool isNameSlot(const MathNode& root, int id);
 
 // Builds a tree from linear syntax, as pasting does (section 11.3): "/" becomes a

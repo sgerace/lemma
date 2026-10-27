@@ -2,6 +2,7 @@
 
 #include "lemma/error.h"
 #include "lemma/format.h"
+#include "lemma/numeric_calculus.h"
 #include "lemma/units.h"
 
 #include <cmath>
@@ -247,6 +248,17 @@ private:
     {
         if (const std::string* why = env_.unavailable(node.name)) {
             throw Error(*why, node.begin, node.end, node.origin);
+        }
+        // d/dx f and ∫ f dx, in their linear forms (symbolic spec, section 15.3).
+        if (node.name == "diff" || node.name == "integrate") {
+            const bool derivative = node.name == "diff";
+            const std::size_t n = node.args.size();
+            if (n < 2 || node.args[1]->kind != Node::Kind::Identifier || (derivative ? n > 3 : n != 2 && n != 4)) {
+                throw Error(derivative ? "diff takes an expression and a name, and an order: diff(x^3, x, 2)"
+                                       : "integrate takes an expression and a name, and limits: integrate(x^2, x, 0, 1)",
+                            node.begin, node.end, node.origin);
+            }
+            return derivative ? evaluateDerivative(node, env_) : evaluateIntegral(node, env_);
         }
         std::vector<Quantity> args;
         args.reserve(node.args.size());

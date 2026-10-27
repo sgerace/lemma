@@ -419,6 +419,112 @@ TEST_CASE("Symbolic evaluation substitutes the definitions above it (7)")
 }
 
 
+TEST_CASE("Derivative and integral operators under → (15.2, 15.4)")
+{
+    // The cantilever's deflection, with its slope defined by the operator: no → and no keep.
+    const std::string y = "y(x) := P*x^2*(3*L - x)/(6*E*I)";
+    const std::string theta = "θ(x) := diff(y(x), x)";
+    CHECK(lastValue({y, theta, "θ(x) -> keep, P, L, E, I"}) == "P x*(2 L - x)/(2 E I)");
+    CHECK(lastValue({y, theta, "integrate(θ(x), x, 0, L) -> keep, P, L, E, I"}) == "P L^3/(3 E I)");
+    CHECK(lastValue({"P := 4 kN", "L := 2.5 m", "E := 200 GPa", "I := 12500000/3 mm^4", y, theta,
+                     "integrate(θ(x), x, 0, L) ->"})
+          == "0.025 m");
+    // The same as the keywords.
+    CHECK(lastValue({y, "diff(y(x), x) -> keep, P"}) == lastValue({y, "y(x) -> keep, P; diff, x"}));
+
+    // Its variable is the main variable, as a keyword's is (section 11).
+    CHECK(lastValue({"diff(a*x^2 + b*x, x) ->"}) == "2 a x + b");
+
+    // A derivative's variable then means what it does where the operator stands (15.1).
+    CHECK(lastValue({"x := 2", "diff(x^3, x) ->"}) == "12");
+    CHECK(lastValue({"f(t) := diff(t^3, t) ->", "f(2) ="}) == "12");
+    // Units: the variable has a value inside the operand, so 2 m is a length.
+    CHECK(lastValue({"diff(x*2 m, x) ->"}) == "2 m");
+    CHECK(lastValue({"integrate(2 N, x, 0, 3 m) ->"}) == "6 N*m");
+
+    // Beyond the engine, a note, not an error.
+    const Worksheet ws = sheet({"integrate(exp(x^2), x, 0, 1) ->"});
+    CHECK(last(ws).status == RegionResult::Status::Ok);
+    CHECK(last(ws).note == "Couldn't integrate this");
+    CHECK(last(ws).value == "integrate(e^x^2, x, 0, 1)");
+}
+
+TEST_CASE("Derivative and integral operators evaluate numerically (15.3)")
+{
+    // The cantilever: its slope at the tip, and the tip deflection as the slope's integral.
+    const std::initializer_list<std::string> cantilever = {"P := 4 kN", "L := 2.5 m", "E := 200 GPa",
+                                                           "I := 12500000/3 mm^4", "y(x) := P*x^2*(3*L - x)/(6*E*I)",
+                                                           "θ(x) := diff(y(x), x)"};
+    const auto with = [&](const std::string& last) {
+        std::vector<std::string> lines(cantilever);
+        lines.push_back(last);
+        Worksheet ws;
+        double y = 0;
+        for (const std::string& line : lines) {
+            ws.addRegion(0, y, line);
+            y += 20;
+        }
+        ws.evaluate();
+        INFO(ws.regions().back().result.error);
+        return ws.regions().back().result.value;
+    };
+    CHECK(with("θ(L) =") == "0.015");
+    CHECK(with("integrate(θ(x), x, 0, L) = mm") == "25 mm"); // a limit of 0 takes L's units
+}
+
+TEST_CASE("Numeric derivatives are exact, at the variable's value where they stand (15.3)")
+{
+    CHECK(lastValue({"x := 2", "diff(x^3, x) ="}) == "12");
+    CHECK(lastValue({"f(x) := diff(x^3, x, 2)", "f(2) ="}) == "12");
+    CHECK(lastValue({"t := 0.5", "diff(sin(3*t) + t^2, t) ="}) == "1.212");
+    // Units and definitions mean what they do numerically.
+    CHECK(lastValue({"v := 2 m/s", "x(t) := v*t + 9.81 m/s^2*t^2/2", "t := 2 s", "diff(x(t), t) ="}) == "21.62 m/s");
+    CHECK(lastError({"diff(x^3, x) ="}) == "x is not defined");
+    CHECK(lastError({"x := 1", "diff(max(x, 2*x), x) ="}) == "Couldn't differentiate max");
+    CHECK(lastError({"x := 1", "diff(x^2, x, 0) ="}) == "The order is a whole number from 1 to 99");
+}
+
+TEST_CASE("Definite integrals are exact where they can be, and otherwise numeric (15.3)")
+{
+    CHECK(lastValue({"integrate(exp(x^2), x, 0, 1) ="}) == "1.463"); // by quadrature
+    CHECK(lastValue({"integrate(sqrt(1 - x^2), x, -1, 1) ="}) == "1.571");
+    CHECK(lastValue({"integrate(max(x, 0.5), x, 0, 1) ="}) == "0.625");
+    CHECK(lastValue({"integrate(diff(x^3, x), x, 0, 2) ="}) == "8");
+    CHECK(lastValue({"integrate(integrate(x*y, x, 0, 1), y, 0, 2) ="}) == "1");
+    // The variable is the integral's own.
+    CHECK(lastValue({"x := 100", "integrate(x, x, 0, 1) ="}) == "0.5");
+    // Units: the integrand's times the variable's.
+    CHECK(lastValue({"integrate(2 N, x, 0, 3 m) ="}) == "6 J");
+    CHECK(lastValue({"integrate(x, x, 0, 3 m) ="}) == "4.5 m²");
+    CHECK(lastError({"integrate(x, x, 1 s, 3 m) ="}) == "Units don't match: the limits are s and m");
+    CHECK(lastError({"integrate(1/x, x, 0, 1) ="}) == "This integral doesn't converge");
+    CHECK(lastError({"integrate(a*x, x, 0, 1) ="}) == "a is not defined");
+
+    // An indefinite integral needs the engine's antiderivative.
+    CHECK(lastValue({"x := 3", "integrate(x^2, x) ="}) == "9");
+    CHECK(lastError({"x := 3", "integrate(exp(x^2), x) ="})
+          == "Couldn't integrate this; give it limits to integrate numerically");
+}
+
+TEST_CASE("A plot of a derivative matches one of the function it was defined as (15.4)")
+{
+    Worksheet ws;
+    ws.addRegion(0, 0, "y(x) := x^3/6 - x");
+    ws.addRegion(0, 20, "θ(x) := x^2/2 - 1");
+    const int plot = ws.addPlotRegion(0, 40, 288, 192, "diff(y(x), x), θ(x)");
+    ws.evaluate();
+    const RegionResult& r = ws.region(plot)->result;
+    INFO(r.error);
+    REQUIRE(r.status == RegionResult::Status::Ok);
+    REQUIRE(r.plot.traces.size() == 2);
+    const auto& derivative = r.plot.traces[0].segments.at(0);
+    const auto& theta = r.plot.traces[1].segments.at(0);
+    REQUIRE(derivative.size() == theta.size());
+    for (std::size_t i = 0; i < theta.size(); ++i) {
+        CHECK(derivative[i].y == Catch::Approx(theta[i].y));
+    }
+}
+
 TEST_CASE("A parameter named like a unit stays apart from the unit (8)")
 {
     // As in the classical mechanics example, with the distance downrange called s.
@@ -725,4 +831,3 @@ TEST_CASE("A symbolic definition defines its name as the result (7.1)")
     CHECK(lastError({"s := x == 1"}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
     CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
 }
-

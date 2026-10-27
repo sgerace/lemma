@@ -34,6 +34,12 @@ struct LowerOptions {
     // Out: names in the order they first appear, definitions' included where they're
     // substituted, for the display order (section 11).
     std::vector<std::string>* order = nullptr;
+    // Out: why a derivative or integral was left as it is, when the engine couldn't
+    // compute it (section 15.2): "Couldn't integrate this".
+    std::string* note = nullptr;
+    // Out: the variable of the first derivative or indefinite integral, the result's
+    // main variable for display (section 11) unless a keyword names one.
+    std::string* main = nullptr;
 };
 
 // The expression a tree means (docs/symbolic-spec.md, section 4): fractions are

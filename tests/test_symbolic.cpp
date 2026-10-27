@@ -222,11 +222,42 @@ TEST_CASE("Errors name the node they come from")
     CHECK(errorNode(hole) == hole.children[1].id);
 }
 
+TEST_CASE("Derivative and integral operators are computed where they stand (15.2)")
+{
+    CHECK(simplified("diff(x^3, x) + 1") == "3 x^2 + 1");
+    CHECK(simplified("diff(x^3, x, 2)") == "6 x");
+    CHECK(simplified("integrate(x^2, x)") == "x^3/3");
+    CHECK(simplified("integrate(x^2, x, 0, a)") == "a^3/3");
+    CHECK(simplified("integrate(w*x, x, 0, L)") == "w L^2/2");
+    // A definite integral's variable is its own: the x outside is another name.
+    CHECK(simplified("integrate(x, x, 0, 1) + x") == "x + 1/2");
+    CHECK(simplified("integrate(diff(x^4, x), x)") == "x^4");
+
+    // Beyond the engine, the operator stays, shown as itself, with the keyword's note.
+    std::string note;
+    LowerOptions options;
+    options.note = &note;
+    const MathNode tree = mathFromLinear("2*integrate(exp(x^2), x, 0, 1)");
+    const Expr e = simplify(exprFromMath(tree, options));
+    CHECK(note == "Couldn't integrate this");
+    const MathNode shown = show(e, tree);
+    CHECK(toLinear(shown) == "2 integrate(e^x^2, x, 0, 1)");
+    CHECK(shown.children[1].kind == MathNode::Kind::Integral);
+    note.clear();
+    CHECK(toLinear(show(simplify(exprFromMath(mathFromLinear("diff(f(x), x)"), options)), tree)) == "diff(f(x), x)");
+    CHECK(note == "Couldn't differentiate f, a function with no definition");
+
+    // An order that isn't a whole number is an error on it.
+    const MathNode bad = mathFromLinear("diff(x^2, x, 1.5)");
+    CHECK(errorNode(bad) == bad.children[1].id);
+}
+
 TEST_CASE("A result's text parses back to the same expression")
 {
     for (const char* source : {"w*L^4/(8*E*I)", "x^2 - 5*x + 6", "-(a + b)", "sqrt(8)*x", "a - b/c",
                                "P*x*(2*L - x)/(2*E*I)", "exp(-k*t)", "x^(-2/3)", "abs(x - y)", "3/(2*x)",
-                               "sin(x)^2/cos(x)", "2.5*x", "pi*r^2"}) {
+                               "sin(x)^2/cos(x)", "2.5*x", "pi*r^2", "2*integrate(exp(x^2), x, 0, 1)",
+                               "diff(f(x), x, 2) + 1"}) {
         const Expr e = simplify(parse(source));
         const std::string text = toLinear(show(e, mathFromLinear(source)));
         INFO(source << " -> " << text);
@@ -450,4 +481,86 @@ TEST_CASE("Antiderivatives and solutions check out numerically")
     }
     CHECK(integrated > 300);
     CHECK(solved > 100);
+}
+
+// The operators evaluated numerically (section 15.3), checked the same way: a derivative
+// matches a central difference, and a definite integral a fine Simpson's rule.
+TEST_CASE("Derivative and integral operators have the right values numerically")
+{
+    RandomExpressions random;
+    int differentiated = 0;
+    int integrated = 0;
+    for (int run = 0; run < 600; ++run) {
+        const std::string source = random.generate(3);
+        INFO(source);
+        const MathNode tree = mathFromLinear(source);
+        const double y = random.value();
+        const auto at = [&](double x) {
+            Environment env;
+            env.define("x", Quantity::scalar(x));
+            env.define("y", Quantity::scalar(y));
+            env.define("z", Quantity::scalar(1.3));
+            return env;
+        };
+        const NodePtr lowered = lowerExpression(tree);
+        Environment sample = at(0.0); // one environment, x changed in place: this runs often
+        const auto f = [&](double x) {
+            sample.define("x", Quantity::scalar(x));
+            return evaluate(*lowered, sample).value;
+        };
+
+        const double x = random.value();
+        const double h = 1e-5;
+        double slope = 0.0;
+        try {
+            slope = (f(x + h) - f(x - h)) / (2 * h);
+        } catch (const Error&) {
+            slope = NAN;
+        }
+        if (std::isfinite(slope) && std::abs(slope) < 1e5) {
+            try {
+                const double d = evaluate(*lowerExpression(mathFromLinear("diff(" + source + ", x)")), at(x)).value;
+                CHECK(std::abs(d - slope) <= 1e-4 * std::max(1.0, std::abs(slope)));
+                ++differentiated;
+            } catch (const Error& e) {
+                INFO(e.what());
+                CHECK(false);
+            }
+        }
+
+        // Simpson's rule on [0.5, 1.5], where the integrand has a value everywhere. A grid
+        // can step around a pole, so it counts only if half as many steps agree.
+        const auto simpsonWith = [&](int steps) {
+            double sum = 0.0;
+            for (int i = 0; i <= steps; ++i) {
+                double v = NAN;
+                try {
+                    v = f(0.5 + static_cast<double>(i) / steps);
+                } catch (const Error&) {
+                }
+                if (!std::isfinite(v) || std::abs(v) > 1e4) {
+                    return static_cast<double>(NAN);
+                }
+                sum += v * (i == 0 || i == steps ? 1 : i % 2 == 1 ? 4 : 2);
+            }
+            return sum / (3.0 * steps);
+        };
+        const double simpson = simpsonWith(600);
+        const double coarse = simpsonWith(300);
+        if (!std::isfinite(simpson) || !std::isfinite(coarse)
+            || std::abs(simpson - coarse) > 1e-8 * std::max(1.0, std::abs(simpson))) {
+            continue;
+        }
+        try {
+            const double integral =
+                evaluate(*lowerExpression(mathFromLinear("integrate(" + source + ", x, 0.5, 1.5)")), at(1.0)).value;
+            CHECK(std::abs(integral - simpson) <= 1e-6 * std::max(1.0, std::abs(simpson)));
+            ++integrated;
+        } catch (const Error& e) {
+            INFO(e.what());
+            CHECK(false);
+        }
+    }
+    CHECK(differentiated > 250);
+    CHECK(integrated > 250);
 }
