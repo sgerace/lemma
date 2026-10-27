@@ -45,8 +45,10 @@ void collectStops(const MathNode& n, std::vector<MathCaret>& out)
     case Kind::Fraction:
     case Kind::Radical:
     case Kind::Group:
+    case Kind::Derivative:
+    case Kind::Integral:
         // These have something of their own on the left: the minus sign, the rule, the
-        // radical sign, the parenthesis.
+        // radical sign, the parenthesis, d/d and ∫.
         beside(Side::Left);
         break;
     default:
@@ -77,11 +79,14 @@ MathCaret rightEdge(const MathNode& n)
 // ---------------------------------------------------------------------------
 // Characters
 
-// Child `index` of `p` is a name: a function's or a keyword's (see isNameSlot).
+// Child `index` of `p` is a name: a function's, a keyword's, or a derivative's or
+// integral's variable (see isNameSlot).
 bool nameSlot(const MathNode* p, int index)
 {
     return p && (((p->kind == Kind::Call || p->kind == Kind::Keyword) && index == 0)
-                 || (p->kind == Kind::Symbolic && index >= 1));
+                 || (p->kind == Kind::Symbolic && index >= 1)
+                 || ((p->kind == Kind::Derivative || p->kind == Kind::Integral)
+                     && &p->children[static_cast<std::size_t>(index)] == &calculusVariable(*p)));
 }
 
 // Node `id` is a whole slot that can hold an equation: the region (when it isn't a
@@ -263,6 +268,9 @@ MathEditor::Change MathEditor::type(std::string_view ch)
     if (ch == "⩵") {
         return typeEquation();
     }
+    if (ch == "∫") {
+        return typeCalculus('I'); // Ctrl+I
+    }
 
     if (ch.size() == 1) {
         switch (ch[0]) {
@@ -282,6 +290,9 @@ MathEditor::Change MathEditor::type(std::string_view ch)
             return typeSemicolon();
         case '\\':
             return typeRadical();
+        case '?':
+        case '&':
+            return typeCalculus(ch[0]);
         case ':':
             return typeStatement(':');
         case '=':
@@ -335,6 +346,9 @@ bool MathEditor::fillMissingOperator(char op)
 MathEditor::Change MathEditor::typeOperator(char op)
 {
     if (fillMissingOperator(op)) {
+        return Change::Edited;
+    }
+    if (op == '^' && addDerivativeOrder()) {
         return Change::Edited;
     }
 
@@ -712,6 +726,79 @@ MathEditor::Change MathEditor::typeRadical()
     return Change::Edited;
 }
 
+MathEditor::Change MathEditor::typeCalculus(char key)
+{
+    // "?" gives d/d■ ■, "&" ∫_■^■ ■ d■, and Ctrl+I ∫ ■ d■ (section 8.5). Like "\\", they
+    // take a selection as the operand, and multiply next to existing content.
+    MathNode* n = findMathNode(root_, caret_.node);
+    int index = 0;
+    const MathNode* p = parentOf(root_, caret_.node, &index);
+    if ((caret_.selected && n->isStatement()) || nameSlot(p, index)) {
+        return Change::None;
+    }
+    const bool definite = key == '&';
+    const auto build = [&](MathNode operand) {
+        MathNode b(key == '?' ? Kind::Derivative : Kind::Integral);
+        if (key == '?') {
+            b.children.emplace_back();
+            b.children.push_back(std::move(operand));
+            return b;
+        }
+        if (definite) {
+            b.children.resize(2);
+        }
+        b.children.push_back(std::move(operand));
+        b.children.emplace_back();
+        return b;
+    };
+    // The caret goes to the first empty slot, but a new definite integral starts at its
+    // integrand, which is usually written first.
+    const auto start = [&](const MathNode& b) {
+        const MathNode& operand = calculusOperand(b);
+        if (definite && operand.kind == Kind::Placeholder) {
+            return operand.id;
+        }
+        return firstPlaceholder(b)->id;
+    };
+
+    if (caret_.selected) {
+        MathNode built = build(std::move(*n));
+        const int next = start(built);
+        *n = std::move(built);
+        caret_ = {next, 0, Side::Left, false};
+        return Change::Edited;
+    }
+    MathNode built = build(MathNode());
+    const int next = start(built);
+    if (n->kind == Kind::Placeholder) {
+        *n = std::move(built);
+    } else if (multiplyBeside(std::move(built), n->id) == Change::None) {
+        return Change::None;
+    }
+    caret_ = {next, 0, Side::Left, false};
+    return Change::Edited;
+}
+
+bool MathEditor::addDerivativeOrder()
+{
+    // "^" at the end of a derivative's variable gives it an order: d/dx then ^2 is d²/dx².
+    if (caret_.selected) {
+        return false;
+    }
+    const MathNode* n = findMathNode(root_, caret_.node);
+    int index = 0;
+    MathNode* p = parentOf(root_, caret_.node, &index);
+    if (!p || p->kind != Kind::Derivative || index != 0
+        || (isText(*n) && caret_.offset != static_cast<int>(n->text.size()))) {
+        return false;
+    }
+    if (p->children.size() == 2) {
+        p->children.insert(p->children.begin() + 1, MathNode());
+    }
+    caret_ = rightEdge(p->children[1]);
+    return true;
+}
+
 MathEditor::Change MathEditor::typeStatement(char op)
 {
     // ":" and "=" act on the whole region, wherever the caret is (section 8.4). An
@@ -801,6 +888,9 @@ bool MathEditor::removePlaceholder(int id, bool before)
         caret_ = next;
     };
     const int last = static_cast<int>(p->children.size()) - 1;
+    if (p->kind == Kind::Derivative || p->kind == Kind::Integral) {
+        return removeCalculusPlaceholder(*p, index, before);
+    }
     if (before) {
         // An operator, or a box's opening, is on the placeholder's left.
         switch (p->kind) {
@@ -889,6 +979,41 @@ bool MathEditor::removePlaceholder(int id, bool before)
     }
 }
 
+bool MathEditor::removeCalculusPlaceholder(MathNode& p, int index, bool before)
+{
+    // Section 9, rule 7. An empty order or pair of limits goes; so does the operator
+    // itself, keeping its operand, when nothing else in it has been filled in.
+    const auto empty = [](const MathNode& n) { return n.kind == Kind::Placeholder; };
+    const std::size_t i = static_cast<std::size_t>(index);
+    const MathNode& slot = p.children[i];
+    if (p.kind == Kind::Derivative && p.children.size() == 3 && i == 1) {
+        p.children.erase(p.children.begin() + 1);
+        caret_ = rightEdge(p.children[0]);
+        return true;
+    }
+    if (p.kind == Kind::Integral && p.children.size() == 4 && i < 2) {
+        if (!empty(p.children[1 - i])) {
+            return false;
+        }
+        p.children.erase(p.children.begin(), p.children.begin() + 2);
+        caret_ = leftEdge(p.children[0]);
+        return true;
+    }
+    const MathNode& operand = calculusOperand(p);
+    const bool bare = std::all_of(p.children.begin(), p.children.end(),
+                                  [&](const MathNode& c) { return &c == &operand || empty(c); });
+    if (!bare) {
+        return false;
+    }
+    // The caret stays on the side of the operand the emptied slot was.
+    const bool slotFirst = &slot < &operand || (&slot == &operand && before);
+    MathNode kept = std::move(p.children[static_cast<std::size_t>(&operand - p.children.data())]);
+    const MathCaret next = slotFirst ? leftEdge(kept) : rightEdge(kept);
+    p = std::move(kept);
+    caret_ = next;
+    return true;
+}
+
 MathEditor::Change MathEditor::eraseAtLeftEdge(int id)
 {
     // Backspace with the caret at the left edge of node `id`: what is to the left?
@@ -939,6 +1064,8 @@ MathEditor::Change MathEditor::eraseAtLeftEdge(int id)
             select(p->id, Side::Right);
             return Change::Moved;
         case Kind::Fraction:
+        case Kind::Derivative:
+        case Kind::Integral:
             select(p->id, Side::Right);
             return Change::Moved;
         case Kind::Equation:
@@ -1008,6 +1135,8 @@ MathEditor::Change MathEditor::eraseAtRightEdge(int id)
         case Kind::Power:
         case Kind::Call:
         case Kind::Keyword:
+        case Kind::Derivative:
+        case Kind::Integral:
             select(p->id, Side::Left);
             return Change::Moved;
         case Kind::Equation:

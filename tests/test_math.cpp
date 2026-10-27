@@ -89,6 +89,24 @@ std::string show(const MathNode& n, const MathCaret& caret)
     case MathNode::Kind::Equation:
         s = show(n.children[0], caret) + " ⩵ " + show(n.children[1], caret);
         break;
+    case MathNode::Kind::Derivative: {
+        const int last = static_cast<int>(n.children.size()) - 1;
+        s = "d/d" + show(n.children[0], caret);
+        if (last == 2) {
+            s += "^[" + show(n.children[1], caret) + "]";
+        }
+        s += " " + showChild(n, last, caret);
+        break;
+    }
+    case MathNode::Kind::Integral: {
+        const std::size_t count = n.children.size();
+        s = "∫";
+        if (count == 4) {
+            s += "_[" + show(n.children[0], caret) + "]^[" + show(n.children[1], caret) + "]";
+        }
+        s += " " + show(n.children[count - 2], caret) + " d" + show(n.children[count - 1], caret);
+        break;
+    }
     }
     if (caret.node == n.id && caret.selected) {
         s = caret.side == MathCaret::Side::Left ? "|⟨" + s + "⟩" : "⟨" + s + "⟩|";
@@ -293,6 +311,64 @@ TEST_CASE("Definitions and evaluations act on the whole region (8.4)")
     CHECK(typed(":") == "■ := |■");
 }
 
+TEST_CASE("? makes a derivative, & and Ctrl+I an integral (8.5)")
+{
+    CHECK(typed("?") == "d/d|■ ■");
+    CHECK(typed("?x{right}y^2") == "d/dx y^[2|]");
+    CHECK(typed("&") == "∫_[■]^[■] |■ d■"); // a definite integral starts at its integrand
+    CHECK(typed("&x{tab}x{tab}0{tab}L") == "∫_[0]^[L|] x dx");
+    CHECK(typed("∫") == "∫ |■ d■");
+    CHECK(typed("∫x{tab}x") == "∫ x dx|");
+
+    // A selection is the operand, and the caret goes to the first empty slot.
+    CHECK(after("y(x)", "{space}?") == "d/d|■ y(x)");
+    CHECK(after("y(x)", "{space}&") == "∫_[|■]^[■] y(x) d■");
+    CHECK(after("y(x)", "{space}∫") == "∫ y(x) d|■");
+    // Next to existing content, it multiplies (6.4).
+    CHECK(typed("2?") == "2·d/d|■ ■");
+    CHECK(typed("2&") == "2·∫_[■]^[■] |■ d■");
+
+    // The variable is a name slot: no numbers or operators in it.
+    CHECK(typed("?2") == "d/d|■ ■");
+    CHECK(typed("?x+") == "d/dx| ■");
+    CHECK(typed("∫{tab}x(") == "∫ ■ dx|");
+}
+
+TEST_CASE("^ after a derivative's variable gives it an order (8.5)")
+{
+    CHECK(typed("?x^2") == "d/dx^[2|] ■");
+    CHECK(typed("?x^2{right}f") == "d/dx^[2] f|");
+    CHECK(typed("?x{left}^") == "d/d|x ■"); // only at the end of the name
+    CHECK(after("diff(f, x, 2)", "{home}{right}{right}^") == "d/dx^[2|] f"); // to the order it has
+}
+
+TEST_CASE("A derivative's operand is parenthesized as for ·; an integrand never is (2)")
+{
+    CHECK(after("diff(x + 1, x)", "") == "d/dx (x + 1)|");
+    CHECK(after("diff(x*y, x)", "") == "d/dx x·y|");
+    CHECK(after("integrate(x + 1, x)", "") == "∫ x + 1 dx|");
+    CHECK(after("diff(x, x)^2", "") == "(d/dx x)^[2]|");
+    CHECK(after("2*integrate(x, x)", "") == "2·∫ x dx|");
+}
+
+TEST_CASE("Backspace on a derivative's or integral's slots (9, rule 7)")
+{
+    // Undoing ? or & typed by mistake.
+    CHECK(typed("?{bs}") == "|■");
+    CHECK(typed("&{bs}") == "|■");
+    CHECK(after("y(x)", "{space}?{bs}") == "|y(x)");
+    CHECK(after("y(x)", "{space}∫{bs}") == "y(x)|");
+    CHECK(after("y(x)", "{space}&{del}") == "∫ |y(x) d■"); // two empty limits go first
+    // An empty order goes, and so do two empty limits.
+    CHECK(typed("?x^{bs}") == "d/dx| ■");
+    CHECK(typed("&f{tab}x{tab}{bs}") == "∫ |f dx");
+    // With something else filled in, it selects the whole operator first (rule 5).
+    CHECK(typed("&f{tab}x{tab}0{tab}{bs}") == "⟨∫_[0]^[■] f dx⟩|");
+    CHECK(typed("?x{right}{bs}") == "⟨d/dx ■⟩|");
+    CHECK(after("diff(y, x)", "{home}{right}{bs}") == "⟨d/dx y⟩|");
+    CHECK(after("integrate(f, x)", "{end}{left}{del}") == "|⟨∫ f dx⟩");
+}
+
 TEST_CASE("Backspace: selections, characters and placeholders (9, rules 1-3)")
 {
     CHECK(typed("a+b*c{space}{space}{bs}") == "a + |■");
@@ -330,7 +406,7 @@ TEST_CASE("Backspace at the start of a slot (9, rule 5)")
     CHECK(after("-a", "{end}{left}{bs}") == "|a");
 }
 
-TEST_CASE("Backspace before a statement operator (9, rules 6-7)")
+TEST_CASE("Backspace before a statement operator, and at the ends (9, rules 6 and 8)")
 {
     CHECK(typed("x:{bs}") == "x|");
     CHECK(typed("a+b={bs}") == "a + b|");
@@ -493,6 +569,15 @@ void checkTree(const MathNode& n, bool root, const MathNode* parent = nullptr, s
         REQUIRE((n.children[0].kind == K::Identifier || n.children[0].kind == K::Placeholder));
         expected = n.children.size();
         break;
+    case K::Derivative:
+    case K::Integral: {
+        const bool derivative = n.kind == K::Derivative;
+        REQUIRE((n.children.size() == 2 || n.children.size() == (derivative ? 3u : 4u)));
+        const K variable = calculusVariable(n).kind;
+        REQUIRE((variable == K::Identifier || variable == K::Placeholder));
+        expected = n.children.size();
+        break;
+    }
     }
     REQUIRE(n.children.size() == expected);
     for (std::size_t i = 0; i < n.children.size(); ++i) {
@@ -529,7 +614,8 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
 {
     const char* keys[] = {"a", "b", "x", "2", "1", ".", "e", "+", "-", "*", "/", "^", "(", ")", ",", "\\",
                           ":", "=", "{space}", "{shift-space}", "{left}", "{right}", "{home}", "{end}", "{bs}",
-                          "{del}", "{ins}", "{tab}", "{shift-tab}", "f(", "_", "→", "⩵", ";", "solve,"};
+                          "{del}", "{ins}", "{tab}", "{shift-tab}", "f(", "_", "→", "⩵", ";", "solve,",
+                          "?", "&", "∫"};
     std::uint32_t seed = 12345;
     const auto random = [&](std::size_t n) {
         seed = seed * 1664525u + 1013904223u; // a fixed sequence, so failures reproduce
@@ -545,7 +631,8 @@ TEST_CASE("Any sequence of keys leaves a valid tree and caret")
             ::keys(e, key);
             checkEditor(e);
             if (random(20) == 0) {
-                e.paste(mathFromLinear(random(2) == 0 ? "(p + 1)/q" : "p == q"));
+                const char* pasted[] = {"(p + 1)/q", "p == q", "diff(p^2, q, 2)", "integrate(p, q, 0, 1)"};
+                e.paste(mathFromLinear(pasted[random(std::size(pasted))]));
                 checkEditor(e);
             }
         }
@@ -636,7 +723,9 @@ TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
     for (const char* source : {"x^2 - 1 ->", "x^2 - 5*x + 6 -> factor", "M == σ*I/c -> solve, σ",
                                "θ(x) := y(x) -> diff, x", "M_max := w*L^2/8 -> keep, w",
                                "y -> keep, P, L; diff, x", "f(x) -> substitute, x == 2",
-                               "t_peak := v_y(t) == 0 -> solve, t"}) {
+                               "t_peak := v_y(t) == 0 -> solve, t", "θ(x) := diff(y(x), x)",
+                               "diff(f, x, 2)", "integrate(f, x)", "integrate(θ(x), x, 0, L) =",
+                               "2 integrate(x, x)", "diff(x^2, x) -> keep, x"}) {
         CHECK(toLinear(mathFromLinear(source)) == source);
     }
     CHECK(toLinear(mathFromLinear("a ⩵ b → simplify")) == "a == b -> simplify");
@@ -656,4 +745,18 @@ TEST_CASE("Symbolic evaluations and equations in linear text (6.4)")
     MathEditor sum;
     keys(sum, "a+");
     CHECK(sum.paste(mathFromLinear("p == q")) == MathEditor::Change::None);
+}
+
+TEST_CASE("Up and Down move between a derivative's variable and order, and an integral's limits (6.2)")
+{
+    for (const char* source : {"diff(f, x, 3)", "integrate(f, x, 0, L)"}) {
+        INFO(source);
+        const MathNode tree = mathFromLinear(source);
+        const MathLayout layout = layoutMath(tree, kSimpleMetrics);
+        const MathCaret below{tree.children[0].id, 0, MathCaret::Side::Left, false};
+        const auto up = layout.vertical(tree, below, true);
+        REQUIRE(up);
+        CHECK(up->node == tree.children[1].id);
+        CHECK(layout.vertical(tree, *up, false)->node == tree.children[0].id);
+    }
 }

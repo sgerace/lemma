@@ -14,9 +14,9 @@ namespace {
 
 constexpr auto kFormat = "lemma-worksheet";
 // 2: text regions; 3: plot regions; 4: math regions store their tree, not linear text;
-// 5: symbolic evaluations and equations. Lemma is pre-release, so older versions are
-// refused rather than migrated.
-constexpr int kVersion = 5;
+// 5: symbolic evaluations and equations; 6: derivatives and integrals. Lemma is
+// pre-release, so older versions are refused rather than migrated.
+constexpr int kVersion = 6;
 
 using Kind = lemma::MathNode::Kind;
 
@@ -83,6 +83,21 @@ QJsonObject toJson(const lemma::MathNode& n)
     }
     case Kind::Equation:
         return {{"kind", "equation"}, {"lhs", toJson(c[0])}, {"rhs", toJson(c[1])}};
+    case Kind::Derivative: {
+        QJsonObject o{{"kind", "derivative"}, {"expr", toJson(c.back())}, {"var", toJson(c[0])}};
+        if (c.size() == 3) {
+            o["order"] = toJson(c[1]);
+        }
+        return o;
+    }
+    case Kind::Integral: {
+        QJsonObject o{{"kind", "integral"}, {"expr", toJson(lemma::calculusOperand(n))}, {"var", toJson(c.back())}};
+        if (c.size() == 4) {
+            o["from"] = toJson(c[0]);
+            o["to"] = toJson(c[1]);
+        }
+        return o;
+    }
     }
     return {};
 }
@@ -135,6 +150,31 @@ lemma::MathNode fromJson(const QJsonValue& value, Place place = Place::Other)
             throw BadTree{};
         }
         return call;
+    }
+    if (kind == "derivative" || kind == "integral") {
+        lemma::MathNode variable = slot("var");
+        if (variable.kind != Kind::Identifier && variable.kind != Kind::Placeholder) {
+            throw BadTree{};
+        }
+        if (kind == "derivative") {
+            lemma::MathNode d(Kind::Derivative, {std::move(variable)});
+            if (o.contains("order")) {
+                d.children.push_back(slot("order"));
+            }
+            d.children.push_back(slot("expr"));
+            return d;
+        }
+        lemma::MathNode i(Kind::Integral);
+        if (o.contains("from") != o.contains("to")) {
+            throw BadTree{}; // both limits or neither
+        }
+        if (o.contains("from")) {
+            i.children.push_back(slot("from"));
+            i.children.push_back(slot("to"));
+        }
+        i.children.push_back(slot("expr"));
+        i.children.push_back(std::move(variable));
+        return i;
     }
     // A definition or evaluation is only ever a whole region.
     if (root && kind == "definition") {

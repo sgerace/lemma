@@ -52,10 +52,22 @@ bool MathNode::isBox() const
     case Kind::Radical:
     case Kind::Group:
     case Kind::Call:
+    case Kind::Derivative:
+    case Kind::Integral:
         return true;
     default:
         return false;
     }
+}
+
+const MathNode& calculusOperand(const MathNode& n)
+{
+    return n.kind == MathNode::Kind::Derivative ? n.children.back() : n.children[n.children.size() - 2];
+}
+
+const MathNode& calculusVariable(const MathNode& n)
+{
+    return n.kind == MathNode::Kind::Derivative ? n.children.front() : n.children.back();
 }
 
 bool MathNode::sameAs(const MathNode& other) const
@@ -135,7 +147,11 @@ bool needsParentheses(const MathNode& parent, int index)
     case MathNode::Kind::Power:
         return index == 0
                && (child.kind == MathNode::Kind::Binary || child.kind == MathNode::Kind::Negate
-                   || child.kind == MathNode::Kind::Fraction || child.kind == MathNode::Kind::Power);
+                   || child.kind == MathNode::Kind::Fraction || child.kind == MathNode::Kind::Power
+                   || child.kind == MathNode::Kind::Derivative || child.kind == MathNode::Kind::Integral);
+    case MathNode::Kind::Derivative:
+        // The operand, as for "·": d/dx (x² + 1). An integrand is enclosed by ∫ and dx.
+        return &child == &parent.children.back() && sum;
     default:
         return false;
     }
@@ -183,7 +199,9 @@ bool isNameSlot(const MathNode& root, int id)
         return false;
     }
     return ((p->kind == MathNode::Kind::Call || p->kind == MathNode::Kind::Keyword) && index == 0)
-           || (p->kind == MathNode::Kind::Symbolic && index >= 1);
+           || (p->kind == MathNode::Kind::Symbolic && index >= 1)
+           || ((p->kind == MathNode::Kind::Derivative || p->kind == MathNode::Kind::Integral)
+               && &p->children[static_cast<std::size_t>(index)] == &calculusVariable(*p));
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +236,26 @@ MathNode fromAst(const Node& n, std::string_view source)
     case Node::Kind::Call: {
         if (n.name == "sqrt" && n.args.size() == 1) {
             return MathNode(MathNode::Kind::Radical, {fromAst(*n.args[0], source)});
+        }
+        // diff(f, x, n) and integrate(f, x, a, b) are the operators' linear forms (#41).
+        const bool named = n.args.size() >= 2 && n.args[1]->kind == Node::Kind::Identifier;
+        if (named && n.name == "diff" && n.args.size() <= 3) {
+            MathNode d(MathNode::Kind::Derivative, {MathNode::identifier(n.args[1]->name)});
+            if (n.args.size() == 3) {
+                d.children.push_back(fromAst(*n.args[2], source));
+            }
+            d.children.push_back(fromAst(*n.args[0], source));
+            return d;
+        }
+        if (named && n.name == "integrate" && (n.args.size() == 2 || n.args.size() == 4)) {
+            MathNode i(MathNode::Kind::Integral);
+            if (n.args.size() == 4) {
+                i.children.push_back(fromAst(*n.args[2], source));
+                i.children.push_back(fromAst(*n.args[3], source));
+            }
+            i.children.push_back(fromAst(*n.args[0], source));
+            i.children.push_back(MathNode::identifier(n.args[1]->name));
+            return i;
         }
         MathNode call(MathNode::Kind::Call, {MathNode::identifier(n.name)});
         for (const NodePtr& arg : n.args) {
@@ -342,6 +380,8 @@ bool juxtaposes(const MathNode& rhs)
     case MathNode::Kind::Group:
     case MathNode::Kind::Call:
     case MathNode::Kind::Radical:
+    case MathNode::Kind::Derivative:
+    case MathNode::Kind::Integral:
         return true;
     case MathNode::Kind::Power:
         return juxtaposes(rhs.children[0]);
@@ -420,6 +460,11 @@ std::string linear(const MathNode& n)
     }
     case MathNode::Kind::Equation:
         return linear(c[0]) + " == " + linear(c[1]);
+    case MathNode::Kind::Derivative:
+        return "diff(" + linear(c.back()) + ", " + linear(c[0]) + (c.size() == 3 ? ", " + linear(c[1]) : "") + ")";
+    case MathNode::Kind::Integral:
+        return "integrate(" + linear(calculusOperand(n)) + ", " + linear(c.back())
+               + (c.size() == 4 ? ", " + linear(c[0]) + ", " + linear(c[1]) : "") + ")";
     }
     return {};
 }
@@ -519,6 +564,24 @@ NodePtr lowerExpression(const MathNode& m, std::span<const int> units)
     case MathNode::Kind::Equation: {
         auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0], units), lowerExpression(c[1], units)});
         n->op = '=';
+        return n;
+    }
+    case MathNode::Kind::Derivative:
+    case MathNode::Kind::Integral: {
+        // As calls in their linear form, diff(f, x, n) and integrate(f, x, a, b), which is
+        // also what a plot's trace parses to.
+        const MathNode& variable = calculusVariable(m);
+        if (variable.kind != MathNode::Kind::Identifier) {
+            throw Error("Fill in the placeholder", 0, 0, variable.id);
+        }
+        std::vector<NodePtr> args{lowerExpression(calculusOperand(m), units), lowerExpression(variable, units)};
+        const bool derivative = m.kind == MathNode::Kind::Derivative;
+        // Then the order, or the limits: the children other than the variable and operand.
+        for (std::size_t i = 0; i + 2 < c.size(); ++i) {
+            args.push_back(lowerExpression(c[derivative ? i + 1 : i], units));
+        }
+        auto n = make(Node::Kind::Call, m, std::move(args));
+        n->name = derivative ? "diff" : "integrate";
         return n;
     }
     case MathNode::Kind::Placeholder:

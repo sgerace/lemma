@@ -320,6 +320,12 @@ private:
         case Kind::Keyword:
             box = keyword(n, level);
             break;
+        case Kind::Derivative:
+            box = derivative(n, level);
+            break;
+        case Kind::Integral:
+            box = integral(n, level);
+            break;
         case Kind::Equation:
             box = child(n, 0, level);
             box.append(boldEquals(sz), relationSpace());
@@ -427,9 +433,12 @@ private:
 
     Box fraction(const MathNode& n, int level)
     {
-        const double sz = size(level);
-        Box num = node(n.children[0], level);
-        Box den = node(n.children[1], level);
+        return stacked(node(n.children[0], level), node(n.children[1], level), size(level));
+    }
+
+    // Two boxes over a rule.
+    Box stacked(Box num, Box den, double sz)
+    {
         const double pad = 0.12 * sz;
         const double thickness = c_.fractionRuleThickness * sz;
         const double axis = c_.axisHeight * sz;
@@ -457,10 +466,11 @@ private:
 
     Box power(const MathNode& n, int level)
     {
-        const double sz = size(level);
-        Box box = child(n, 0, level);
-        const int scriptLevel = std::min(level + 1, 2);
-        Box exponent = node(n.children[1], scriptLevel);
+        return superscript(child(n, 0, level), node(n.children[1], std::min(level + 1, 2)), size(level));
+    }
+
+    Box superscript(Box box, Box exponent, double sz)
+    {
         const double up = std::max({c_.superscriptShiftUp * sz, exponent.descent + c_.superscriptBottomMin * sz,
                                     box.ascent - c_.superscriptBaselineDropMax * sz});
         const double x = box.width + 0.03 * sz;
@@ -468,6 +478,68 @@ private:
         box.ascent = std::max(box.ascent, up + exponent.ascent);
         box.descent = std::max(box.descent, exponent.descent - up);
         box.place(std::move(exponent), x, -up);
+        return box;
+    }
+
+    // d/dx f, or dⁿ/dxⁿ f with the order on both d and x (editor spec, section 13). The
+    // order is one slot: its copy on d isn't somewhere the caret can go.
+    Box derivative(const MathNode& n, int level)
+    {
+        const double sz = size(level);
+        const int scriptLevel = std::min(level + 1, 2);
+        const bool nth = n.children.size() == 3;
+        Box top = text("d", sz);
+        Box bottom = text("d", sz);
+        bottom.append(node(n.children[0], level), 0.02 * sz);
+        if (nth) {
+            Box copy = node(n.children[1], scriptLevel);
+            copy.nodes.clear();
+            top = superscript(std::move(top), std::move(copy), sz);
+            bottom = superscript(std::move(bottom), node(n.children[1], scriptLevel), sz);
+        }
+        Box box = stacked(std::move(top), std::move(bottom), sz);
+        box.append(child(n, static_cast<int>(n.children.size()) - 1, level), 0.1 * sz);
+        return box;
+    }
+
+    // ∫ f dx, or ∫ₐᵇ f dx with the limits at the sign's upper and lower right. The sign is
+    // the font's, scaled to cover the integrand and at least kDisplay times the text size;
+    // these sizes are hard-coded until the font's MATH table is read (#35).
+    Box integral(const MathNode& n, int level)
+    {
+        constexpr double kDisplay = 1.5;
+        const double sz = size(level);
+        const double axis = c_.axisHeight * sz;
+        Box integrand = node(calculusOperand(n), level);
+        const double half = std::max(integrand.ascent - axis, integrand.descent + axis) + 0.15 * sz;
+        const MathFontMetrics::Extent unit = metrics_.measure("∫", sz);
+        const double inkHalf = std::max((unit.ascent + unit.descent) / 2, 0.01 * sz);
+        const double signSize = sz * std::max(kDisplay, half / inkHalf);
+        const MathFontMetrics::Extent glyph = metrics_.measure("∫", signSize);
+        const double drop = (glyph.ascent - glyph.descent) / 2 - axis; // centres it on the axis
+
+        Box box;
+        box.width = glyph.width;
+        box.ascent = glyph.ascent - drop;
+        box.descent = glyph.descent + drop;
+        box.place(text("∫", signSize), 0.0, drop);
+        if (n.children.size() == 4) {
+            const int scriptLevel = std::min(level + 1, 2);
+            Box lower = node(n.children[0], scriptLevel);
+            Box upper = node(n.children[1], scriptLevel);
+            const double upperX = glyph.width + 0.05 * sz;
+            const double lowerX = glyph.width * 0.55; // tucked under the sign's slant
+            const double upperY = -box.ascent + upper.ascent;
+            const double lowerY = box.descent - lower.descent * 0.5;
+            const double right = std::max(upperX + upper.width, lowerX + lower.width);
+            box.descent = std::max(box.descent, lowerY + lower.descent);
+            box.place(std::move(upper), upperX, upperY);
+            box.place(std::move(lower), lowerX, lowerY);
+            box.width = right;
+        }
+        box.append(std::move(integrand), 0.12 * sz);
+        box.append(text("d", sz), 3.0 / 18.0 * sz);
+        box.append(node(n.children.back(), level), 0.02 * sz);
         return box;
     }
 
@@ -642,6 +714,13 @@ std::optional<MathCaret> MathLayout::vertical(const MathNode& root, const MathCa
             target = &p->children[up ? 0 : 1];
         } else if (p->kind == Kind::Power && (up ? index == 0 : index == 1)) {
             target = &p->children[up ? 1 : 0];
+        } else if ((p->kind == Kind::Derivative && p->children.size() == 3)
+                   || (p->kind == Kind::Integral && p->children.size() == 4)) {
+            // A derivative's variable (0) and its order above (1); an integral's lower (0)
+            // and upper (1) limit.
+            if (up ? index == 0 : index == 1) {
+                target = &p->children[up ? 1 : 0];
+            }
         }
         if (target) {
             MathCaret best;
