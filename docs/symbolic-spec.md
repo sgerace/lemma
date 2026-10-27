@@ -282,7 +282,9 @@ A definition's right-hand side may be a symbolic evaluation:
   `2 m·3 m`), in an expression whose other names all have values. That holds for the
   region's expression and for each definition's value as it's substituted
   (`P := 4 kN`), whose names are read in the definition's own place. A function's
-  parameters have values for this purpose: `f(x) := x + 2 m` has units.
+  parameters have values for this purpose: `f(x) := x + 2 m` has units. They're
+  names only in the function's own expression: with `v := 20 m/s` above,
+  `f(s) := s·v →` is `20 s m/s`, whose second `s` is the unit.
   - An expression with free names is a derivation, and its unit names are names
     too: in `½ m v²`, `m` is a mass, and in `P x² (3 L − x)`, `L` is a length. So
     is `L` in `w L⁴/(8 E I)`, after no number at all.

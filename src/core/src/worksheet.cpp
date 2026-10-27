@@ -106,7 +106,7 @@ RegionResult evaluateSymbolicRegion(const MathNode& math, std::span<const Symbol
     try {
         LowerOptions lowering;
         lowering.definitions = definitions;
-        lowering.keep = parameters;
+        lowering.parameters = parameters;
         std::vector<Operation> operations;
         for (std::size_t i = 1; i < math.children.size(); ++i) {
             const MathNode& k = math.children[i];
@@ -399,7 +399,7 @@ void evaluateSymbolicDefinition(Region& r, Environment& env, std::vector<Symboli
     precise.upright = &r.result.definedUnits;
     r.result.definedAs = mathFromExpr(*value, precise);
     try {
-        const NodePtr body = lowerExpression(*r.result.definedAs);
+        const NodePtr body = lowerExpression(*r.result.definedAs, r.result.definedUnits);
         if (d->function) {
             env.defineFunction(d->name, {d->params, body, std::make_shared<Environment>(env)});
         } else {

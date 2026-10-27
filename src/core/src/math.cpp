@@ -5,6 +5,7 @@
 
 #include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <atomic>
 #include <system_error>
 #include <utility>
@@ -461,7 +462,7 @@ double parseNumber(const MathNode& n)
 
 } // namespace
 
-NodePtr lowerExpression(const MathNode& m)
+NodePtr lowerExpression(const MathNode& m, std::span<const int> units)
 {
     const auto& c = m.children;
     switch (m.kind) {
@@ -473,49 +474,50 @@ NodePtr lowerExpression(const MathNode& m)
     case MathNode::Kind::Identifier: {
         auto n = make(Node::Kind::Identifier, m);
         n->name = m.text;
+        n->unit = std::find(units.begin(), units.end(), m.id) != units.end();
         return n;
     }
     case MathNode::Kind::Binary: {
         if (m.op == 0) {
             throw Error("Fill in the placeholder", 0, 0, m.id);
         }
-        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0]), lowerExpression(c[1])});
+        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0], units), lowerExpression(c[1], units)});
         n->op = m.op;
         n->juxtaposed = m.juxtaposed;
         return n;
     }
     case MathNode::Kind::Negate: {
-        auto n = make(Node::Kind::Unary, m, {lowerExpression(c[0])});
+        auto n = make(Node::Kind::Unary, m, {lowerExpression(c[0], units)});
         n->op = '-';
         return n;
     }
     case MathNode::Kind::Fraction:
     case MathNode::Kind::Power: {
-        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0]), lowerExpression(c[1])});
+        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0], units), lowerExpression(c[1], units)});
         n->op = m.kind == MathNode::Kind::Fraction ? '/' : '^';
         return n;
     }
     case MathNode::Kind::Radical: {
-        auto n = make(Node::Kind::Call, m, {lowerExpression(c[0])});
+        auto n = make(Node::Kind::Call, m, {lowerExpression(c[0], units)});
         n->name = "sqrt";
         return n;
     }
     case MathNode::Kind::Group:
-        return lowerExpression(c[0]);
+        return lowerExpression(c[0], units);
     case MathNode::Kind::Call: {
         if (c[0].kind != MathNode::Kind::Identifier) {
             throw Error("Fill in the placeholder", 0, 0, c[0].id);
         }
         std::vector<NodePtr> args;
         for (std::size_t i = 1; i < c.size(); ++i) {
-            args.push_back(lowerExpression(c[i]));
+            args.push_back(lowerExpression(c[i], units));
         }
         auto n = make(Node::Kind::Call, m, std::move(args));
         n->name = c[0].text;
         return n;
     }
     case MathNode::Kind::Equation: {
-        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0]), lowerExpression(c[1])});
+        auto n = make(Node::Kind::Binary, m, {lowerExpression(c[0], units), lowerExpression(c[1], units)});
         n->op = '=';
         return n;
     }

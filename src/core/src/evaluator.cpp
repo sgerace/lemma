@@ -194,7 +194,7 @@ private:
             throw Error(*why, node.begin, node.end, node.origin);
         }
         const Unit* unit = UnitRegistry::instance().find(node.name);
-        if (lookup_ == Lookup::UnitsFirst && unit) {
+        if ((lookup_ == Lookup::UnitsFirst || node.unit) && unit) {
             return unitValue(*unit, node);
         }
         if (const Quantity* q = env_.variable(node.name)) {
