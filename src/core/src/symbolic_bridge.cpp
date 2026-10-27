@@ -161,7 +161,11 @@ public:
 
     Expr region(const MathNode& m)
     {
-        Scope scope{o_.definitions.size(), nullptr, 0, nullptr};
+        Bindings params;
+        for (const std::string& name : o_.parameters) {
+            params.emplace_back(name, Expr::variable(name, !listed(o_.real, name)));
+        }
+        Scope scope{o_.definitions.size(), &params, 0, nullptr};
         const std::unordered_set<int> units = unitPositions(m, scope);
         scope.units = &units;
         return lower(m, scope);
@@ -272,7 +276,7 @@ private:
         if (scope.params) {
             for (const auto& [param, value] : *scope.params) {
                 if (param == name) {
-                    return value;
+                    return named(value); // in order where a parameter first appears
                 }
             }
         }

@@ -2,6 +2,7 @@
 
 #include "lemma/ast.h"
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -105,6 +106,8 @@ std::string toLinear(const MathNode& node);
 // tree or one that can't be evaluated (a definition of something that isn't a name).
 // An empty unit placeholder in an evaluation is not an error.
 Statement lowerMath(const MathNode& root);
-NodePtr lowerExpression(const MathNode& node);
+// `units` are the identifiers that are units whatever else has their names, as a
+// symbolic result knows (RegionResult::definedUnits).
+NodePtr lowerExpression(const MathNode& node, std::span<const int> units = {});
 
 } // namespace lemma

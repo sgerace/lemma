@@ -22,6 +22,7 @@ struct Node {
     std::string name;          // Identifier, Call
     char op = 0;               // Unary: '-'; Binary: '+', '-', '*', '/', '^', and '=' for an equation (==)
     bool juxtaposed = false;   // Binary '*' written without an operator: "10 N"
+    bool unit = false;         // Identifier: a unit even if a variable has its name, as in a symbolic result
     std::vector<NodePtr> args; // Unary: operand; Binary: lhs, rhs; Call: arguments
 };
 

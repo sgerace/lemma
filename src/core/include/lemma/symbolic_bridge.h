@@ -24,6 +24,9 @@ struct SymbolicDefinition {
 struct LowerOptions {
     // The definitions above the region, in worksheet order.
     std::span<const SymbolicDefinition> definitions;
+    // A function definition's parameters: variables in the region's own tree, which have
+    // values for telling units (section 8). The definitions it substitutes don't see them.
+    std::vector<std::string> parameters;
     std::vector<std::string> keep; // names left symbolic: the `keep` keyword
     std::vector<std::string> real; // names that may be negative: the `real` keyword
     // Out: the identifiers of the region's tree that meant units, to show them upright.

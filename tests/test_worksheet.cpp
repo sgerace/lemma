@@ -418,6 +418,37 @@ TEST_CASE("Symbolic evaluation substitutes the definitions above it (7)")
     CHECK(u.result.errorNode == u.math.children[0].children[1].id);
 }
 
+
+TEST_CASE("A parameter named like a unit stays apart from the unit (8)")
+{
+    // As in the classical mechanics example, with the distance downrange called s.
+    const auto trajectory = [](const std::string& x) {
+        return sheet({
+            "v_0 := 20 m/s",
+            "y(t) := v*sin(θ)*t - g*t^2/2",
+            "path(" + x + ") := y(t) -> substitute, t == " + x + "/(v*cos(θ))",
+            "trajectory(" + x + ", θ) := path(" + x + ") -> substitute, v == v_0",
+            "trajectory(10 m, 45 deg) = m",
+        });
+    };
+    const Worksheet named = trajectory("s");
+    const Worksheet other = trajectory("X");
+    std::string expected = other.regions()[3].result.value;
+    for (std::size_t at = expected.find('X'); at != std::string::npos; at = expected.find('X', at)) {
+        expected[at] = 's';
+    }
+    CHECK(named.regions()[3].result.value == expected);
+    CHECK(last(named).value == "7.548 m");
+    CHECK(last(other).value == "7.548 m");
+
+    // The parameter doesn't make the units in a definition free (P := 4 kN still has
+    // units), and a function's own units are units.
+    CHECK(lastValue({"v := 2 m/s", "f(s) := s*v ->", "f(3) = m/s"}) == "6 m/s");
+    CHECK(lastValue({"f(x) := x + 2 m ->", "f(1 m) = m"}) == "3 m");
+    // A unit from a definition above stays a unit in a result, even where a variable
+    // of its name is defined in between.
+    CHECK(lastValue({"v := 20 m/s", "s := 3", "w := v ->", "w = m/s"}) == "20 m/s");
+}
 TEST_CASE("A unit name is a unit after a number, where nothing else is free (8)")
 {
     Worksheet ws;
@@ -694,3 +725,4 @@ TEST_CASE("A symbolic definition defines its name as the result (7.1)")
     CHECK(lastError({"s := x == 1"}) == "An equation (Ctrl+=) only has a meaning in a symbolic evaluation (→)");
     CHECK(lastError({"q := 1/(a - a) -> simplify", "q ="}) == "q is not defined");
 }
+
