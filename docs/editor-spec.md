@@ -27,7 +27,7 @@ Goals:
 
 Not in the first version (each can be added later without changing the model):
 matrices, literal subscripts (Mathcad's `x.1`), absolute value bars, n-th roots,
-sums/integrals, Greek-letter shortcuts, `=` after a definition (`x := 2 m = 2 m`),
+sums and products (derivatives and integrals came with #41), Greek-letter shortcuts, `=` after a definition (`x := 2 m = 2 m`),
 and 2D editing of plot placeholders (they stay linear text).
 
 ## 2. The editor tree
@@ -51,6 +51,8 @@ The linear form column is what Copy writes (section 11.3).
 | `Radical` | radicand | `√` with an overbar | `sqrt(x)` |
 | `Group` | contents | `( … )` | `( … )` |
 | `Call` | name (an identifier), arguments 1..n | `f(a, b)` | `f(a, b)` |
+| `Derivative` | operand, variable (a name), and an order for an n-th derivative | `d/dx f`, `dⁿ/dxⁿ f` | `diff(f, x)`, `diff(f, x, n)` |
+| `Integral` | integrand, variable (a name), and a lower and upper limit for a definite integral | `∫ f dx`, `∫ₐᵇ f dx` | `integrate(f, x)`, `integrate(f, x, a, b)` |
 | `Definition` | lhs, rhs | `lhs := rhs` | `lhs := rhs` |
 | `Evaluation` | expression, unit (may be a placeholder) | `expr = result unit` | `expr =` or `expr = unit` |
 | `Symbolic` | expression, keyword slots 1..n | `expr → result`, keywords above the arrow | `expr ->` or `expr -> keyword; keyword` |
@@ -64,7 +66,8 @@ Terms used below:
 
 - A **leaf** is a `Number`, `Identifier` or `Placeholder`.
 - A **box** is a node that typesets its children in their own slots: `Fraction`,
-  `Power`, `Radical`, `Group`, `Call`. Each child of a box is the root of a **slot**.
+  `Power`, `Radical`, `Group`, `Call`, `Derivative`, `Integral`. Each child of a box
+  is the root of a **slot**.
 - The **statement** is the root: a `Definition`, an `Evaluation`, a `Symbolic`, or a
   bare expression. Its children are slots too.
 - An **operator chain** is the part of a slot made of `Binary` and `Negate` nodes. It
@@ -84,7 +87,10 @@ needs implied parentheses, since the rule groups it.
 **Precedence**, loosest to tightest, matching the parser: `:=` and `=` (statement
 only); `+ −`; `· /` and juxtaposition; unary `−`; `^` (right associative). `Fraction`
 counts as `/` when deciding implied parentheses around it (for example `−[a/b]` needs
-none, `[a/b]^2` does).
+none, `[a/b]^2` does). `Derivative` and `Integral` count as `·`: `2 ∫ f dx` and
+`−d/dx f` need none, `(d/dx f)²` does. A derivative's operand is drawn in implied
+parentheses when it is a sum, `d/dx (x² + 1)`, as for `·`; an integrand never is,
+since `∫` and `dx` already enclose it.
 
 ## 3. Caret and selection
 
@@ -204,6 +210,8 @@ box enters its first slot, and leaving the last slot lands right after the box:
 - `Power`: base, then exponent.
 - `Radical`, `Group`: contents.
 - `Call`: the name, then each argument.
+- `Derivative`: the order (if any), the variable, then the operand.
+- `Integral`: the lower and upper limits (if any), the integrand, then the variable.
 - `Definition`, `Evaluation`: lhs, then rhs or unit. The result of an evaluation is not
   a stop.
 
@@ -223,8 +231,9 @@ only Enter, Escape and clicking elsewhere do, as today.)
 
 ### 6.2 Up and Down
 
-Up and Down move between slots stacked vertically: numerator ↔ denominator, and base
-↔ exponent (Up from the base goes to the exponent). The caret goes to the stop nearest
+Up and Down move between slots stacked vertically: numerator ↔ denominator, base
+↔ exponent (Up from the base goes to the exponent), a derivative's variable ↔ its
+order, and an integral's lower ↔ upper limit. The caret goes to the stop nearest
 the caret's current x position. With no slot above or below, they do nothing.
 
 ### 6.3 Home and End
@@ -326,6 +335,29 @@ structure.
 
 Spaces typed as text are not needed anywhere: Space is the grow key (7).
 
+### 8.5 Derivatives and integrals
+
+The keys are Mathcad's. Each acts like `\` (8.3): on a placeholder it gives the empty
+operator, with a selection it takes the selection as its operand or integrand, and
+next to existing content it multiplies by a new one (6.4).
+
+| Key | On `|■` | On `⟨y(x)⟩|` |
+|---|---|---|
+| `?` | `d/d|■ ■` | `d/d|■ y(x)` |
+| `&` | `∫_■^■ |■ d■` (definite) | `∫_|■^■ y(x) d■` |
+| Ctrl+I | `∫ |■ d■` (indefinite) | `∫ y(x) d|■` |
+
+- The caret goes to the first empty slot in the order of 6.1, except that `&` on a
+  placeholder starts at the integrand, which is usually written first.
+- The variable slot is a name slot, like a function's name: only a name goes there,
+  and operators can't be typed in it.
+- `^` at the end of a derivative's variable adds the order: `d/dx|` then `^2` gives
+  `d²/dx²|`. The order is one slot, drawn on both `d` and `x`. It takes a whole
+  number from 1 to 99; anything else is an error on it.
+- A call typed by name, `diff(y(x), x)` or `integrate(f, x, 0, L)`, stays a call
+  and means the same as the operator, so linear typing works. Paste makes the box
+  (11.3).
+
 ## 9. Deleting
 
 Backspace deletes to the left of the caret, Delete to the right. Rules, in order:
@@ -353,7 +385,14 @@ Backspace deletes to the left of the caret, Delete to the right. Rules, in order
 6. **Before a statement operator** (Backspace right after `:=` or `=`): if the rhs or
    unit is a placeholder, turns the statement back into a bare expression:
    `x := |■` → `x|`; `a + b = |■` → `a + b|`. Otherwise it selects the rhs.
-7. **At the first or last stop of the region:** nothing.
+7. **Optional parts and operator slots.** Backspace on an empty derivative order
+   removes the order (`d^[|■]/dx^[■] f` → `d/dx| f`). On an empty integral limit, it
+   removes both limits when both are empty, making the integral indefinite, and
+   otherwise selects the integral. On an empty variable, it removes the operator and
+   keeps its operand or integrand (`d/d|■ y(x)` → `|y(x)`), undoing `?` or `&` typed
+   by mistake. Backspace at the start of a slot with content selects the whole
+   derivative or integral, as rule 5 does for a fraction.
+8. **At the first or last stop of the region:** nothing.
 
 Delete mirrors Backspace (left ↔ right, end of slot ↔ start of slot).
 
@@ -403,6 +442,11 @@ nested objects with full kind names and named slots. For `I := b h^3 / 12`:
   saves and loads like any other.
 - Node ids are not saved; they are assigned on load.
 - Text regions and plot placeholders keep their strings.
+- Derivatives and integrals (#41) save as
+  `{"kind": "derivative", "expr": …, "var": …, "order": …}`, with `order` only for an
+  n-th derivative, and `{"kind": "integral", "expr": …, "var": …, "from": …, "to": …}`,
+  with `from` and `to` only for a definite integral. They are new node kinds, so the
+  version goes from 5 to 6, and version 5 files are refused.
 
 The full schema is settled with the "file format" item of the issue. The version goes
 from 3 to 4. Lemma is pre-release, so version 4 does not load older files: they are
@@ -417,7 +461,8 @@ are unchanged and no text is parsed on the way.
   that node, so the editor highlights the offending subtree. Byte offsets remain only
   for text that is still parsed: plot placeholders and pasted text.
 - `Group` lowers to its contents, juxtaposition to `*`, `Radical` to a call of `sqrt`,
-  `Fraction` to `/`.
+  `Fraction` to `/`. `Derivative` and `Integral` lower to nodes of their own, which the
+  evaluator computes with the symbolic engine (symbolic spec, section 15).
 - A region containing a placeholder or an operator placeholder is incomplete. It is
   not evaluated and shows "Fill in the placeholder" on the first one.
 
@@ -428,12 +473,14 @@ to the same value:
 
 - `Fraction` writes `num/den`, adding parentheses around either side only when linear
   precedence needs them: `[a + b / c]` → `(a + b)/c`, `[a / b·c]` → `a/(b*c)`.
-- `Power`, `Radical`, `Call`, `Group`, juxtaposition and the statement nodes write
-  their linear forms (section 2). Implied parentheses are written.
+- `Power`, `Radical`, `Call`, `Group`, `Derivative`, `Integral`, juxtaposition and
+  the statement nodes write their linear forms (section 2). Implied parentheses are
+  written.
 
 Paste parses linear text with the existing parser and converts the AST node by node:
-`/` becomes a `Fraction`, `sqrt(x)` a `Radical`, `10 N` a juxtaposition. Parentheses
-in pasted text become no `Group`: the parser drops them, and layout draws the ones
+`/` becomes a `Fraction`, `sqrt(x)` a `Radical`, `10 N` a juxtaposition, and a call
+of `diff` or `integrate` whose second argument is a name a `Derivative` or `Integral`.
+Parentheses in pasted text become no `Group`: the parser drops them, and layout draws the ones
 precedence needs. So `(a)*b` pastes as `a·b`. That is acceptable for a paste, and it
 avoids changing the parser.
 
@@ -481,6 +528,12 @@ Where the spec was silent, the implementation settles it like this. Each is test
   it, as before.
 - **Incomplete input.** While a region is being edited, an unfilled placeholder isn't
   reported as an error; it is once editing ends.
+- **Derivatives and integrals** are typeset as in a textbook. `d` is upright, as ISO
+  80000-2 writes it, so it never reads as a variable `d`. `d/dx` is a fraction at full
+  size, with the order as a superscript on `d` and on the variable. `∫` is the math
+  font's glyph, scaled to the integrand's height with a minimum of the display size,
+  its limits at its upper and lower right, and the integrand followed by a thin space
+  and `dx`. The sizes are hard-coded until #35 reads the font's `MATH` table.
 - **Typesetting.** Names that meant units are upright and other names italic (math
   italic code points), as are built-in function names. A result with no unit given is
   shown in its default unit, typeset as a tree (`J`, `kg·m/s²`). A name's part after
